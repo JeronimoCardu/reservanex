@@ -1,0 +1,33 @@
+{
+  "name": "@orderflow/worker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "demo": "tsx src/scripts/demo-flow.ts",
+    "seed:demo": "tsx src/scripts/seed-demo.ts",
+    "register:whatsapp": "tsx src/scripts/register-whatsapp-account.ts",
+    "link:user": "tsx src/scripts/link-user-to-tenant.ts",
+    "validate:dedupe": "tsx src/scripts/validate-dedupe.ts",
+    "validate:human-send": "tsx src/scripts/validate-human-send.ts",
+    "validate:deepseek": "tsx src/scripts/validate-deepseek.ts",
+    "validate:agent-scenarios": "tsx src/scripts/validate-agent-scenarios.ts",
+    "validate:save-contact-name": "tsx src/scripts/validate-save-contact-name.ts",
+    "seed:autoresponder": "tsx src/scripts/seed-autoresponder-account.ts",
+    "validate:autoresponder": "tsx src/scripts/validate-autoresponder.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.47.10",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@orderflow/types": "workspace:*",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  }
+}

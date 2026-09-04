@@ -1,0 +1,1 @@
+ALTER TABLE public.reservations REPLICA IDENTITY FULL;

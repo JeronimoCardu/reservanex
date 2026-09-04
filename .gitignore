@@ -1,0 +1,42 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build outputs
+.next
+dist
+out
+build
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Turbo
+.turbo
+
+# TypeScript
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode
+.idea
+
+# Dev scripts output
+apps/web/tmp/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Supabase
+supabase/.branches
+supabase/.temp
+.claude/settings.local.json
+.claude/

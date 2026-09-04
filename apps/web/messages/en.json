@@ -1,0 +1,438 @@
+{
+  "meta": {
+    "title": "ReservaNex — Real estate CRM with WhatsApp and AI",
+    "description": "ReservaNex centralizes your real estate agency's WhatsApp inquiries, answers them with AI using real data from your listings, and organizes conversations, team and bookings in one place.",
+    "ogAlt": "ReservaNex, real estate CRM with WhatsApp and artificial intelligence"
+  },
+  "nav": {
+    "solution": "Solution",
+    "howItWorks": "How it works",
+    "features": "Features",
+    "pricing": "Pricing",
+    "faq": "FAQ",
+    "contact": "Contact",
+    "login": "Log in",
+    "requestInfo": "Request information",
+    "talkWhatsapp": "Chat on WhatsApp",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu",
+    "languageLabel": "Language",
+    "mainNavigation": "Main navigation"
+  },
+  "hero": {
+    "eyebrow": "Real estate CRM with WhatsApp and AI",
+    "title": "Turn your WhatsApp inquiries into leads and bookings",
+    "subtitle": "ReservaNex centralizes your conversations, automatically answers with real information from your listings, and lets your team manage contacts, availability and bookings in one place.",
+    "note": "Built for real estate agencies, short-term rentals and sales teams.",
+    "ctaPrimary": "Chat on WhatsApp",
+    "ctaSecondary": "Request information",
+    "previewAria": "Simulated preview of a WhatsApp conversation managed in the ReservaNex CRM",
+    "previewBadgeAi": "AI active",
+    "previewBadgeHuman": "Human support",
+    "previewContactName": "Maria Silva",
+    "previewClientMessage": "Hi, do you have anything available for 4 people next weekend?",
+    "previewAiMessage": "Hello! Yes, we have two options available for that many guests. Would you like to see details and pricing?",
+    "previewHandoffMessage": "I'd rather talk to someone from the team to confirm the booking.",
+    "previewHumanMessage": "Hi Maria! This is Lucas from the team. I can confirm availability and get the booking sorted right now."
+  },
+  "problemSolution": {
+    "eyebrow": "The usual problem",
+    "title": "WhatsApp inquiries grow faster than your ability to answer them",
+    "subtitle": "Every agency runs into the same operational bottlenecks. ReservaNex solves them from a single place.",
+    "items": [
+      {
+        "problem": "Inquiries scattered across different phones with no organized history.",
+        "solution": "A single inbox with every conversation, its contact and the associated listing."
+      },
+      {
+        "problem": "Your team answers the same questions about location, capacity or price over and over.",
+        "solution": "AI answers automatically using the real information you loaded for each listing."
+      },
+      {
+        "problem": "No one is quite sure who's handling each chat.",
+        "solution": "Assignable conversations: unclaimed chats stay visible to the whole team, assigned ones are clear to everyone."
+      },
+      {
+        "problem": "Bookings and pre-bookings get coordinated through loose messages and details get lost along the way.",
+        "solution": "Bookings with status, temporary availability holds and human confirmation before closing."
+      },
+      {
+        "problem": "Listing information lives scattered across spreadsheets, loose photos and the team's memory.",
+        "solution": "Centralized property records with photos, attributes and custom data."
+      },
+      {
+        "problem": "It's hard to combine the speed of a bot with a person's judgment.",
+        "solution": "AI handles it first and hands off to a person whenever the conversation calls for it."
+      }
+    ]
+  },
+  "howItWorks": {
+    "eyebrow": "How it works",
+    "title": "From inquiry to booking, in one continuous flow",
+    "subtitle": "ReservaNex connects WhatsApp, artificial intelligence and your sales team in a single process.",
+    "steps": [
+      {
+        "title": "The client messages on WhatsApp",
+        "description": "The inquiry arrives at your agency's connected WhatsApp number, just like any regular chat."
+      },
+      {
+        "title": "AI answers with real data",
+        "description": "It uses the information you loaded for your listings: location, capacity, price and availability."
+      },
+      {
+        "title": "The conversation shows up in the CRM",
+        "description": "Without refreshing the page, your team sees the conversation, the contact and the associated listing."
+      },
+      {
+        "title": "The team steps in when needed",
+        "description": "An agent picks up the chat, or the owner assigns it; the AI hands off control as soon as a person is needed."
+      },
+      {
+        "title": "The inquiry moves toward a booking",
+        "description": "Once the details are confirmed, a booking is created and your team validates the final terms."
+      }
+    ],
+    "note": "AI doesn't replace your team: it answers first and makes room for a person the moment the conversation needs one."
+  },
+  "videoDemo": {
+    "eyebrow": "Demo",
+    "title": "See ReservaNex in action",
+    "description": "We're putting together a walkthrough of the full flow: a WhatsApp inquiry, the AI's response, human hand-off and a booking.",
+    "pendingBadge": "Video in progress",
+    "pendingMessage": "You'll be able to watch ReservaNex in action very soon.",
+    "playAria": "Play demo video",
+    "requestDemo": "Request a live demo"
+  },
+  "features": {
+    "eyebrow": "Features",
+    "title": "Everything your team needs to operate over WhatsApp",
+    "subtitle": "Every ReservaNex feature is built around a real estate agency's daily work.",
+    "items": [
+      {
+        "title": "Centralized conversations",
+        "description": "A single inbox with every inquiry, its full history and each chat's status."
+      },
+      {
+        "title": "AI-powered replies",
+        "description": "AI answers frequent questions using the real information from your listings."
+      },
+      {
+        "title": "Human hand-off",
+        "description": "Anyone on your team can take over a conversation the moment it's needed."
+      },
+      {
+        "title": "Conversation assignment",
+        "description": "Split chats across agents, or leave them open for whoever is available to pick up."
+      },
+      {
+        "title": "Contact management",
+        "description": "Every client is recorded with their phone number, name and conversation history."
+      },
+      {
+        "title": "Property management",
+        "description": "Load a main photo, gallery, location, capacity and custom attributes for each listing."
+      },
+      {
+        "title": "Bookings and availability",
+        "description": "Bookings with status, temporary availability holds and confirmation from your team."
+      },
+      {
+        "title": "Roles and permissions",
+        "description": "The owner controls access; each agent operates only within what they're allowed to."
+      },
+      {
+        "title": "Notes and tasks",
+        "description": "Leave notes and tasks tied to a conversation, a contact or a booking."
+      },
+      {
+        "title": "Real-time operation",
+        "description": "Conversations and statuses update instantly, with no page reloads."
+      }
+    ]
+  },
+  "benefits": {
+    "eyebrow": "Benefits",
+    "title": "What changes in your agency's day-to-day",
+    "subtitle": "Concrete outcomes for everyday work, without exaggerated promises.",
+    "items": [
+      "Respond faster to inquiries that come in over WhatsApp.",
+      "Spend less time answering the same questions over and over.",
+      "Centralize your whole sales team's work in one place.",
+      "Keep conversations organized with a complete history.",
+      "Avoid two team members answering the same inquiry separately.",
+      "Follow up on every opportunity through to booking.",
+      "Improve traceability of bookings and confirmations.",
+      "Handle inquiries outside business hours through AI.",
+      "Route sensitive inquiries to a person who can use judgment."
+    ]
+  },
+  "productPreview": {
+    "eyebrow": "The product",
+    "title": "A look inside ReservaNex",
+    "subtitle": "A preview of the CRM your team will use every day.",
+    "tabs": {
+      "conversations": "Conversations",
+      "properties": "Listings",
+      "reservations": "Bookings",
+      "team": "Team"
+    },
+    "conversationsCaption": "Inbox with conversations, status and assignment",
+    "propertiesCaption": "Listing records with photos and custom data",
+    "reservationsCaption": "Bookings with status, dates and confirmation",
+    "teamCaption": "Users, roles and per-agent permissions",
+    "placeholderNote": "Real product screenshots coming soon.",
+    "labels": {
+      "unassigned": "Unassigned",
+      "assignedToMe": "Assigned to me",
+      "aiActive": "AI active",
+      "confirmed": "Confirmed",
+      "pending": "Pending",
+      "owner": "Owner",
+      "receptionist": "Agent"
+    }
+  },
+  "audience": {
+    "eyebrow": "Who it's for",
+    "title": "Built for teams that get a lot of WhatsApp inquiries",
+    "subtitle": "ReservaNex adapts to different kinds of real estate operations across Latin America.",
+    "items": [
+      {
+        "title": "Real estate agencies",
+        "description": "Teams handling sales and rentals that need to bring order to their inquiries."
+      },
+      {
+        "title": "Short-term rentals",
+        "description": "Property managers for short stays with a high volume of recurring inquiries."
+      },
+      {
+        "title": "Sales teams",
+        "description": "Support teams that combine several agents working the same WhatsApp channel."
+      },
+      {
+        "title": "High-volume operations",
+        "description": "Businesses that receive repetitive inquiries and need an immediate first response."
+      }
+    ]
+  },
+  "pricing": {
+    "eyebrow": "Pricing",
+    "title": "Plans based on the size of your operation",
+    "startingFromPrefix": "Plans starting at",
+    "startingFromSuffix": "USD per month",
+    "customPlans": "Custom plans based on the size of your operation",
+    "description": "The final price depends on the number of users, your monthly conversation volume, your WhatsApp setup and the features you need.",
+    "factorsTitle": "Pricing can vary based on:",
+    "factors": [
+      "Number of team users.",
+      "Monthly conversation volume.",
+      "Your WhatsApp number setup.",
+      "Specific features your operation needs."
+    ],
+    "cta": "Talk to us about a plan"
+  },
+  "security": {
+    "eyebrow": "Security and control",
+    "title": "Every agency operates in its own space",
+    "subtitle": "Access control is a core part of the product, not an add-on.",
+    "items": [
+      {
+        "title": "Separate space per agency",
+        "description": "Your information and conversations never mix with another account's."
+      },
+      {
+        "title": "Clear roles",
+        "description": "The owner has full control; agents access only what's enabled for them."
+      },
+      {
+        "title": "Configurable permissions",
+        "description": "The owner decides who can create listings, confirm bookings or assign conversations."
+      },
+      {
+        "title": "Assignable conversations",
+        "description": "Each chat can stay open to the team or be assigned to a specific person."
+      },
+      {
+        "title": "Sensitive decisions stay with people",
+        "description": "AI never confirms bookings or closes deals on its own."
+      }
+    ]
+  },
+  "faq": {
+    "eyebrow": "FAQ",
+    "title": "Everything you need to know before getting started",
+    "items": [
+      {
+        "question": "What is ReservaNex?",
+        "answer": "It's a CRM for real estate agencies that centralizes WhatsApp inquiries, answers them with AI when appropriate, and organizes contacts, listings and bookings in one place."
+      },
+      {
+        "question": "Does ReservaNex replace front-desk agents?",
+        "answer": "No. AI handles initial inquiries and frequent questions, but your team keeps control over sensitive decisions and can take over any conversation whenever needed."
+      },
+      {
+        "question": "How does it connect to WhatsApp?",
+        "answer": "ReservaNex connects through the WhatsApp Cloud API, the official business messaging channel, using your agency's own number."
+      },
+      {
+        "question": "Can the AI answer questions about my listings?",
+        "answer": "Yes. The AI answers using exclusively the information you loaded: location, capacity, description, price and availability."
+      },
+      {
+        "question": "Can I step into a conversation manually?",
+        "answer": "Yes. Any authorized member of your team can take control of a conversation the moment they need to."
+      },
+      {
+        "question": "Can I assign chats to different people?",
+        "answer": "Yes. Conversations can be assigned to a specific agent or left available for anyone on the team to pick up."
+      },
+      {
+        "question": "Does it work for short-term rentals and sales?",
+        "answer": "Yes. ReservaNex is built for both short-term rental operations and traditional sales and long-term rentals."
+      },
+      {
+        "question": "Can I manage bookings?",
+        "answer": "Yes. You can create bookings tied to a conversation, hold availability, and confirm them from your team."
+      },
+      {
+        "question": "How much does it cost?",
+        "answer": "Pricing depends on the size of your operation: number of users, conversation volume and the features you need. Reach out and we'll put together a plan for you."
+      },
+      {
+        "question": "Is it available in multiple languages?",
+        "answer": "Yes. The CRM and this website are available in Spanish, Portuguese and English."
+      },
+      {
+        "question": "Do I need to install any software?",
+        "answer": "No. ReservaNex runs entirely in the browser, with no additional installs."
+      },
+      {
+        "question": "How do I request a demo?",
+        "answer": "Message us on WhatsApp or fill out the contact form and we'll set up a demo with your team."
+      }
+    ]
+  },
+  "contact": {
+    "eyebrow": "Contact",
+    "title": "Let's talk about your operation",
+    "subtitle": "Tell us how your team works today and we'll help you evaluate whether ReservaNex is a fit.",
+    "whatsappTitle": "Chat on WhatsApp",
+    "whatsappDescription": "The fastest way to get information.",
+    "emailTitle": "Email us",
+    "formTitle": "Contact form",
+    "form": {
+      "name": "Name",
+      "namePlaceholder": "Your full name",
+      "company": "Company or agency",
+      "companyPlaceholder": "Your agency's name",
+      "country": "Country",
+      "countryPlaceholder": "Country your team operates in",
+      "whatsapp": "WhatsApp",
+      "whatsappPlaceholder": "E.g: +1 555 123 4567",
+      "email": "Email",
+      "emailPlaceholder": "you@company.com",
+      "propertiesCount": "Approximate number of listings",
+      "propertiesCountPlaceholder": "E.g: 25",
+      "message": "Message",
+      "messagePlaceholder": "Tell us briefly how your team works today",
+      "privacyLabel": "I accept the privacy policy",
+      "privacyLinkText": "privacy policy",
+      "submit": "Send inquiry",
+      "submitting": "Sending…",
+      "successTitle": "All set!",
+      "successMessage": "We received your inquiry. We'll be in touch shortly.",
+      "errorTitle": "We couldn't send your inquiry",
+      "errorMessageDefault": "Something went wrong while sending the form. Try again in a few minutes or message us on WhatsApp.",
+      "errorMessageNotConfigured": "Form submissions aren't configured yet. Please reach us directly on WhatsApp or email.",
+      "errors": {
+        "nameRequired": "Enter your name.",
+        "companyRequired": "Enter your agency's name.",
+        "countryRequired": "Enter your country.",
+        "whatsappRequired": "Enter a valid WhatsApp number.",
+        "emailInvalid": "Enter a valid email.",
+        "propertiesCountInvalid": "Enter a valid number.",
+        "messageRequired": "Tell us briefly about your inquiry.",
+        "messageTooShort": "Tell us a bit more so we can help.",
+        "privacyRequired": "You need to accept the privacy policy."
+      }
+    }
+  },
+  "footer": {
+    "description": "Real estate CRM with WhatsApp and AI to centralize conversations, listings and bookings.",
+    "navTitle": "Navigation",
+    "legalTitle": "Legal",
+    "contactTitle": "Contact",
+    "privacy": "Privacy policy",
+    "terms": "Terms and conditions",
+    "languageTitle": "Language",
+    "rights": "All rights reserved."
+  },
+  "whatsappButton": {
+    "ariaLabel": "Open WhatsApp conversation",
+    "defaultMessage": "Hello, I would like to learn more about ReservaNex."
+  },
+  "legal": {
+    "backHome": "Back to home",
+    "lastUpdated": "Last updated",
+    "placeholderNotice": "This content is a general baseline. Before publishing to production, fill in real company and contact details and have it reviewed by legal counsel."
+  },
+  "privacyPage": {
+    "title": "Privacy policy",
+    "intro": "This policy describes, in general terms, how ReservaNex handles information received through this website and the product.",
+    "sections": [
+      {
+        "heading": "What information we collect",
+        "body": "Through the contact form, we collect the data you voluntarily submit: name, company, country, WhatsApp number, email, approximate number of listings, and your message."
+      },
+      {
+        "heading": "How we use the information",
+        "body": "We use this data exclusively to respond to your inquiry and, together with your team, evaluate whether ReservaNex fits your operation."
+      },
+      {
+        "heading": "Who we share information with",
+        "body": "We don't sell or hand off your information to third parties. Only ReservaNex staff responsible for handling business inquiries use it."
+      },
+      {
+        "heading": "How we protect information",
+        "body": "We apply reasonable security practices to protect the data you share with us, both in transit and at rest."
+      },
+      {
+        "heading": "Your rights",
+        "body": "You can request, at any time, to access, correct or delete the information you shared with us by reaching out through the contact channels on this site."
+      },
+      {
+        "heading": "Responsible company details",
+        "body": "[Fill in legal entity name, registered address and contact details before publishing to production]."
+      }
+    ]
+  },
+  "termsPage": {
+    "title": "Terms and conditions",
+    "intro": "These general terms govern the use of this ReservaNex informational website. They are not a service agreement; specific commercial terms are defined when the product is contracted.",
+    "sections": [
+      {
+        "heading": "Purpose of this website",
+        "body": "This website is for informational and commercial purposes only. It does not provide access to the product and does not function as a customer portal."
+      },
+      {
+        "heading": "Use of the contact form",
+        "body": "By submitting the contact form, you agree that we may use the information sent to respond to your business inquiry."
+      },
+      {
+        "heading": "Intellectual property",
+        "body": "The ReservaNex brand, its logo and the content of this website belong to their owners and may not be reproduced without authorization."
+      },
+      {
+        "heading": "Content availability",
+        "body": "We may update the content of this website, including described features and pricing terms, without prior notice."
+      },
+      {
+        "heading": "Service agreement",
+        "body": "Use of the ReservaNex product by an agency is governed by the commercial terms agreed upon at the time of contracting, not by this document."
+      },
+      {
+        "heading": "Responsible company details",
+        "body": "[Fill in legal entity name, registered address, contact details and jurisdiction before publishing to production]."
+      }
+    ]
+  }
+}

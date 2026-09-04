@@ -1,0 +1,438 @@
+{
+  "meta": {
+    "title": "ReservaNex — CRM inmobiliario con WhatsApp e inteligencia artificial",
+    "description": "ReservaNex centraliza las consultas de WhatsApp de tu inmobiliaria, responde con inteligencia artificial usando datos reales de tus propiedades y organiza conversaciones, equipo y reservas en un solo lugar.",
+    "ogAlt": "ReservaNex, CRM inmobiliario con WhatsApp e inteligencia artificial"
+  },
+  "nav": {
+    "solution": "Solución",
+    "howItWorks": "Cómo funciona",
+    "features": "Funcionalidades",
+    "pricing": "Precio",
+    "faq": "Preguntas frecuentes",
+    "contact": "Contacto",
+    "login": "Iniciar sesión",
+    "requestInfo": "Solicitar información",
+    "talkWhatsapp": "Hablar por WhatsApp",
+    "openMenu": "Abrir menú",
+    "closeMenu": "Cerrar menú",
+    "languageLabel": "Idioma",
+    "mainNavigation": "Navegación principal"
+  },
+  "hero": {
+    "eyebrow": "CRM inmobiliario con WhatsApp e IA",
+    "title": "Convierte las consultas de WhatsApp en oportunidades y reservas",
+    "subtitle": "ReservaNex centraliza tus conversaciones, responde automáticamente con información real de tus propiedades y permite que tu equipo gestione contactos, disponibilidad y reservas desde un solo lugar.",
+    "note": "Pensado para inmobiliarias, alquileres temporarios y equipos comerciales.",
+    "ctaPrimary": "Hablar por WhatsApp",
+    "ctaSecondary": "Solicitar información",
+    "previewAria": "Vista simulada de una conversación de WhatsApp gestionada en el CRM de ReservaNex",
+    "previewBadgeAi": "IA activa",
+    "previewBadgeHuman": "Atención humana",
+    "previewContactName": "María Silva",
+    "previewClientMessage": "Hola, ¿tienen algo disponible para 4 personas el próximo fin de semana?",
+    "previewAiMessage": "¡Hola! Sí, tenemos dos opciones disponibles con esa capacidad. ¿Te muestro los detalles y precios?",
+    "previewHandoffMessage": "Preferiría hablar con alguien del equipo para confirmar la reserva.",
+    "previewHumanMessage": "¡Hola María! Soy Lucas, del equipo. Te confirmo disponibilidad y coordinamos la reserva ahora mismo."
+  },
+  "problemSolution": {
+    "eyebrow": "El problema de siempre",
+    "title": "Las consultas por WhatsApp crecen más rápido que tu capacidad de responderlas",
+    "subtitle": "Cada inmobiliaria enfrenta los mismos cuellos de botella operativos. ReservaNex los resuelve desde un solo lugar.",
+    "items": [
+      {
+        "problem": "Consultas dispersas en distintos celulares y sin historial ordenado.",
+        "solution": "Un inbox único con cada conversación, su contacto y la propiedad asociada."
+      },
+      {
+        "problem": "El equipo responde una y otra vez las mismas preguntas sobre ubicación, capacidad o precio.",
+        "solution": "La IA responde automáticamente con la información real que cargaste de cada propiedad."
+      },
+      {
+        "problem": "Nadie sabe con certeza quién está atendiendo cada chat.",
+        "solution": "Conversaciones asignables: lo que no está tomado lo ve todo el equipo, lo asignado queda claro para todos."
+      },
+      {
+        "problem": "Las reservas o pre-reservas se coordinan por mensajes sueltos y se pierden datos en el camino.",
+        "solution": "Reservas con estado, disponibilidad bloqueada y confirmación humana antes de cerrar."
+      },
+      {
+        "problem": "La información de las propiedades vive repartida entre planillas, fotos sueltas y la memoria del equipo.",
+        "solution": "Fichas de propiedad centralizadas con fotos, atributos y datos personalizados."
+      },
+      {
+        "problem": "Cuesta combinar la velocidad de un bot con el criterio de una persona.",
+        "solution": "La IA atiende primero y deriva a una persona cuando la consulta lo requiere."
+      }
+    ]
+  },
+  "howItWorks": {
+    "eyebrow": "Cómo funciona",
+    "title": "De la consulta a la reserva, en un flujo continuo",
+    "subtitle": "ReservaNex conecta WhatsApp, inteligencia artificial y tu equipo comercial en un mismo proceso.",
+    "steps": [
+      {
+        "title": "El cliente escribe por WhatsApp",
+        "description": "La consulta llega al número de WhatsApp conectado a tu inmobiliaria, como cualquier chat habitual."
+      },
+      {
+        "title": "La IA responde con datos reales",
+        "description": "Usa la información cargada de tus propiedades: ubicación, capacidad, precio y disponibilidad."
+      },
+      {
+        "title": "La conversación aparece en el CRM",
+        "description": "Sin recargar la página, el equipo ve la conversación, el contacto y la propiedad asociada."
+      },
+      {
+        "title": "El equipo interviene cuando corresponde",
+        "description": "Un recepcionista toma el chat o el owner lo asigna; la IA cede el control apenas hace falta una persona."
+      },
+      {
+        "title": "La consulta avanza hacia una reserva",
+        "description": "Con los datos confirmados, se crea una reserva y tu equipo valida los detalles finales."
+      }
+    ],
+    "note": "La inteligencia artificial no reemplaza a tu equipo: atiende primero y da lugar a una persona en el momento en que la conversación lo necesita."
+  },
+  "videoDemo": {
+    "eyebrow": "Demostración",
+    "title": "Mira a ReservaNex en funcionamiento",
+    "description": "Estamos preparando un recorrido en video por el flujo completo: consulta por WhatsApp, respuesta de la IA, intervención humana y reserva.",
+    "pendingBadge": "Video en preparación",
+    "pendingMessage": "Muy pronto vas a poder ver a ReservaNex en funcionamiento.",
+    "playAria": "Reproducir video de demostración",
+    "requestDemo": "Solicitar una demostración en vivo"
+  },
+  "features": {
+    "eyebrow": "Funcionalidades",
+    "title": "Todo lo que tu equipo necesita para operar por WhatsApp",
+    "subtitle": "Cada funcionalidad de ReservaNex está pensada para el trabajo diario de una inmobiliaria.",
+    "items": [
+      {
+        "title": "Conversaciones centralizadas",
+        "description": "Un inbox único con todas las consultas, su historial completo y el estado de cada chat."
+      },
+      {
+        "title": "Respuestas con inteligencia artificial",
+        "description": "La IA responde consultas frecuentes usando la información real de tus propiedades."
+      },
+      {
+        "title": "Intervención humana",
+        "description": "Cualquier miembro del equipo puede tomar el control de una conversación en el momento indicado."
+      },
+      {
+        "title": "Asignación de conversaciones",
+        "description": "Reparte los chats entre recepcionistas o déjalos disponibles para que los tome quien esté libre."
+      },
+      {
+        "title": "Gestión de contactos",
+        "description": "Cada cliente queda registrado con su teléfono, nombre y el historial de conversaciones."
+      },
+      {
+        "title": "Gestión de propiedades",
+        "description": "Cargá foto principal, galería, ubicación, capacidad y atributos personalizados de cada propiedad."
+      },
+      {
+        "title": "Reservas y disponibilidad",
+        "description": "Reservas con estado, bloqueo temporal de disponibilidad y confirmación de tu equipo."
+      },
+      {
+        "title": "Roles y permisos",
+        "description": "El owner controla accesos; cada recepcionista opera solo lo que tiene permitido."
+      },
+      {
+        "title": "Notas y tareas",
+        "description": "Dejá notas y tareas asociadas a una conversación, un contacto o una reserva."
+      },
+      {
+        "title": "Operación en tiempo real",
+        "description": "Conversaciones y estados se actualizan al instante, sin recargar la página."
+      }
+    ]
+  },
+  "benefits": {
+    "eyebrow": "Beneficios",
+    "title": "Lo que cambia en el día a día de tu inmobiliaria",
+    "subtitle": "Resultados concretos para el trabajo diario, sin promesas exageradas.",
+    "items": [
+      "Responder más rápido las consultas que llegan por WhatsApp.",
+      "Reducir el tiempo dedicado a responder siempre lo mismo.",
+      "Centralizar el trabajo de todo el equipo comercial en un solo lugar.",
+      "Mantener las conversaciones ordenadas y con historial completo.",
+      "Evitar que dos personas del equipo respondan lo mismo por separado.",
+      "Dar seguimiento a cada oportunidad hasta la reserva.",
+      "Mejorar la trazabilidad de reservas y confirmaciones.",
+      "Atender consultas fuera del horario comercial mediante la IA.",
+      "Derivar a una persona las consultas sensibles o que requieren criterio."
+    ]
+  },
+  "productPreview": {
+    "eyebrow": "El producto",
+    "title": "Así se ve ReservaNex por dentro",
+    "subtitle": "Un vistazo al CRM que tu equipo va a usar todos los días.",
+    "tabs": {
+      "conversations": "Conversaciones",
+      "properties": "Propiedades",
+      "reservations": "Reservas",
+      "team": "Equipo"
+    },
+    "conversationsCaption": "Inbox con conversaciones, estado y asignación",
+    "propertiesCaption": "Fichas de propiedad con fotos y datos personalizados",
+    "reservationsCaption": "Reservas con estado, fechas y confirmación",
+    "teamCaption": "Usuarios, roles y permisos por recepcionista",
+    "placeholderNote": "Capturas reales del producto próximamente.",
+    "labels": {
+      "unassigned": "Sin asignar",
+      "assignedToMe": "Asignada a mí",
+      "aiActive": "IA activa",
+      "confirmed": "Confirmada",
+      "pending": "Pendiente",
+      "owner": "Owner",
+      "receptionist": "Recepcionista"
+    }
+  },
+  "audience": {
+    "eyebrow": "Para quién es",
+    "title": "Pensado para equipos que reciben muchas consultas por WhatsApp",
+    "subtitle": "ReservaNex se adapta a distintos tipos de operación inmobiliaria en toda Latinoamérica.",
+    "items": [
+      {
+        "title": "Inmobiliarias",
+        "description": "Equipos que gestionan ventas y alquileres y necesitan ordenar sus consultas."
+      },
+      {
+        "title": "Alquileres temporarios",
+        "description": "Administradores de propiedades para estadías cortas con alta rotación de consultas."
+      },
+      {
+        "title": "Equipos comerciales",
+        "description": "Áreas de atención que combinan varios agentes atendiendo el mismo canal de WhatsApp."
+      },
+      {
+        "title": "Operaciones con alto volumen",
+        "description": "Negocios que reciben consultas repetitivas y necesitan una primera respuesta inmediata."
+      }
+    ]
+  },
+  "pricing": {
+    "eyebrow": "Precio",
+    "title": "Planes según el tamaño de tu operación",
+    "startingFromPrefix": "Planes desde",
+    "startingFromSuffix": "USD por mes",
+    "customPlans": "Planes personalizados según el tamaño de tu operación",
+    "description": "El valor final depende de la cantidad de usuarios, el volumen de conversaciones, la configuración de WhatsApp y las funcionalidades que necesites.",
+    "factorsTitle": "El precio puede variar según:",
+    "factors": [
+      "Cantidad de usuarios del equipo.",
+      "Volumen mensual de conversaciones.",
+      "Configuración de tu número de WhatsApp.",
+      "Funcionalidades específicas que necesite tu operación."
+    ],
+    "cta": "Consultar un plan"
+  },
+  "security": {
+    "eyebrow": "Seguridad y control",
+    "title": "Cada inmobiliaria opera en su propio espacio",
+    "subtitle": "El control de accesos es parte central del producto, no un agregado.",
+    "items": [
+      {
+        "title": "Espacio separado por inmobiliaria",
+        "description": "Tu información y tus conversaciones no se mezclan con las de otra cuenta."
+      },
+      {
+        "title": "Roles claros",
+        "description": "El owner tiene control total; los recepcionistas acceden solo a lo que se les habilita."
+      },
+      {
+        "title": "Permisos configurables",
+        "description": "El owner decide quién puede crear propiedades, confirmar reservas o asignar conversaciones."
+      },
+      {
+        "title": "Conversaciones asignables",
+        "description": "Cada chat puede quedar libre para el equipo o asignado a una persona específica."
+      },
+      {
+        "title": "Decisiones sensibles en manos humanas",
+        "description": "La inteligencia artificial no confirma reservas ni cierra operaciones por su cuenta."
+      }
+    ]
+  },
+  "faq": {
+    "eyebrow": "Preguntas frecuentes",
+    "title": "Todo lo que necesitas saber antes de empezar",
+    "items": [
+      {
+        "question": "¿Qué es ReservaNex?",
+        "answer": "Es un CRM para inmobiliarias que centraliza las consultas de WhatsApp, las responde con inteligencia artificial cuando corresponde y organiza contactos, propiedades y reservas en un solo lugar."
+      },
+      {
+        "question": "¿ReservaNex reemplaza a los recepcionistas?",
+        "answer": "No. La IA atiende las consultas iniciales y las preguntas frecuentes, pero tu equipo mantiene el control sobre las decisiones sensibles y puede tomar cualquier conversación cuando lo necesite."
+      },
+      {
+        "question": "¿Cómo se conecta con WhatsApp?",
+        "answer": "ReservaNex se conecta a través de WhatsApp Cloud API, el canal oficial de mensajería de negocios, usando el número de tu inmobiliaria."
+      },
+      {
+        "question": "¿La inteligencia artificial puede responder sobre mis propiedades?",
+        "answer": "Sí. La IA responde usando exclusivamente la información que cargaste: ubicación, capacidad, descripción, precio y disponibilidad."
+      },
+      {
+        "question": "¿Puedo intervenir manualmente en una conversación?",
+        "answer": "Sí. Cualquier persona autorizada de tu equipo puede tomar el control de una conversación en el momento en que lo necesite."
+      },
+      {
+        "question": "¿Puedo asignar chats a diferentes personas?",
+        "answer": "Sí. Las conversaciones se pueden asignar a un recepcionista específico o dejarse disponibles para que las tome cualquiera del equipo."
+      },
+      {
+        "question": "¿Sirve para alquileres temporarios y ventas?",
+        "answer": "Sí. ReservaNex está pensado tanto para operaciones de alquiler temporario como para ventas y alquileres tradicionales."
+      },
+      {
+        "question": "¿Puedo gestionar reservas?",
+        "answer": "Sí. Puedes crear reservas asociadas a una conversación, bloquear disponibilidad y confirmarlas desde el equipo."
+      },
+      {
+        "question": "¿Cuánto cuesta?",
+        "answer": "El precio depende del tamaño de tu operación: cantidad de usuarios, volumen de conversaciones y funcionalidades necesarias. Contáctanos para conocer un plan a medida."
+      },
+      {
+        "question": "¿Está disponible en varios idiomas?",
+        "answer": "Sí. El CRM y esta web están disponibles en español, portugués e inglés."
+      },
+      {
+        "question": "¿Necesito instalar un programa?",
+        "answer": "No. ReservaNex funciona desde el navegador, sin instalaciones adicionales."
+      },
+      {
+        "question": "¿Cómo solicito una demostración?",
+        "answer": "Escríbenos por WhatsApp o completa el formulario de contacto y coordinamos una demostración con tu equipo."
+      }
+    ]
+  },
+  "contact": {
+    "eyebrow": "Contacto",
+    "title": "Conversemos sobre tu operación",
+    "subtitle": "Cuéntanos cómo trabaja tu equipo hoy y te ayudamos a evaluar si ReservaNex encaja con tu operación.",
+    "whatsappTitle": "Hablar por WhatsApp",
+    "whatsappDescription": "La forma más rápida de recibir información.",
+    "emailTitle": "Escribirnos por email",
+    "formTitle": "Formulario de contacto",
+    "form": {
+      "name": "Nombre",
+      "namePlaceholder": "Tu nombre completo",
+      "company": "Empresa o inmobiliaria",
+      "companyPlaceholder": "Nombre de tu inmobiliaria",
+      "country": "País",
+      "countryPlaceholder": "País donde opera tu equipo",
+      "whatsapp": "WhatsApp",
+      "whatsappPlaceholder": "Ej: +54 9 11 1234 5678",
+      "email": "Email",
+      "emailPlaceholder": "tu@empresa.com",
+      "propertiesCount": "Cantidad aproximada de propiedades",
+      "propertiesCountPlaceholder": "Ej: 25",
+      "message": "Mensaje",
+      "messagePlaceholder": "Cuéntanos brevemente cómo trabaja tu equipo hoy",
+      "privacyLabel": "Acepto la política de privacidad",
+      "privacyLinkText": "política de privacidad",
+      "submit": "Enviar consulta",
+      "submitting": "Enviando…",
+      "successTitle": "¡Listo!",
+      "successMessage": "Recibimos tu consulta. Te vamos a contactar a la brevedad.",
+      "errorTitle": "No pudimos enviar tu consulta",
+      "errorMessageDefault": "Ocurrió un problema al enviar el formulario. Prueba nuevamente en unos minutos o escríbenos por WhatsApp.",
+      "errorMessageNotConfigured": "El envío por formulario todavía no está configurado. Por favor, escríbenos directamente por WhatsApp o email.",
+      "errors": {
+        "nameRequired": "Ingresa tu nombre.",
+        "companyRequired": "Ingresa el nombre de tu inmobiliaria.",
+        "countryRequired": "Ingresa tu país.",
+        "whatsappRequired": "Ingresa un número de WhatsApp válido.",
+        "emailInvalid": "Ingresa un email válido.",
+        "propertiesCountInvalid": "Ingresa un número válido.",
+        "messageRequired": "Cuéntanos brevemente tu consulta.",
+        "messageTooShort": "Cuéntanos un poco más para poder ayudarte.",
+        "privacyRequired": "Necesitamos que aceptes la política de privacidad."
+      }
+    }
+  },
+  "footer": {
+    "description": "CRM inmobiliario con WhatsApp e inteligencia artificial para centralizar conversaciones, propiedades y reservas.",
+    "navTitle": "Navegación",
+    "legalTitle": "Legal",
+    "contactTitle": "Contacto",
+    "privacy": "Política de privacidad",
+    "terms": "Términos y condiciones",
+    "languageTitle": "Idioma",
+    "rights": "Todos los derechos reservados."
+  },
+  "whatsappButton": {
+    "ariaLabel": "Abrir conversación de WhatsApp",
+    "defaultMessage": "Hola, quiero recibir información sobre ReservaNex."
+  },
+  "legal": {
+    "backHome": "Volver al inicio",
+    "lastUpdated": "Última actualización",
+    "placeholderNotice": "Este contenido es una base general. Antes de publicar en producción, completa los datos societarios y de contacto reales y revísalo con un asesor legal."
+  },
+  "privacyPage": {
+    "title": "Política de privacidad",
+    "intro": "Esta política describe, de manera general, cómo ReservaNex trata la información recibida a través de esta web y del producto.",
+    "sections": [
+      {
+        "heading": "Qué información recopilamos",
+        "body": "A través del formulario de contacto recopilamos los datos que completas voluntariamente: nombre, empresa, país, WhatsApp, email, cantidad aproximada de propiedades y el mensaje enviado."
+      },
+      {
+        "heading": "Para qué usamos la información",
+        "body": "Usamos estos datos exclusivamente para responder tu consulta y evaluar junto a tu equipo si ReservaNex encaja con tu operación."
+      },
+      {
+        "heading": "Con quién compartimos la información",
+        "body": "No vendemos ni cedemos tu información a terceros. Solo la utilizan las personas de ReservaNex responsables de responder consultas comerciales."
+      },
+      {
+        "heading": "Cómo protegemos la información",
+        "body": "Aplicamos prácticas razonables de seguridad para proteger los datos que nos compartes, tanto en tránsito como en almacenamiento."
+      },
+      {
+        "heading": "Tus derechos",
+        "body": "Puedes solicitarnos en cualquier momento acceder, corregir o eliminar la información que nos compartiste, escribiéndonos por los medios de contacto de esta web."
+      },
+      {
+        "heading": "Datos de la empresa responsable",
+        "body": "[Completar con razón social, domicilio legal y datos de contacto antes de publicar en producción]."
+      }
+    ]
+  },
+  "termsPage": {
+    "title": "Términos y condiciones",
+    "intro": "Estos términos generales regulan el uso de esta web informativa de ReservaNex. No constituyen un contrato de servicio; las condiciones comerciales específicas se definen al contratar el producto.",
+    "sections": [
+      {
+        "heading": "Objeto de esta web",
+        "body": "Esta web tiene fines exclusivamente informativos y comerciales. No incluye acceso al producto ni funciona como portal de clientes."
+      },
+      {
+        "heading": "Uso del formulario de contacto",
+        "body": "Al completar el formulario de contacto, aceptas que utilicemos la información enviada para responder tu consulta comercial."
+      },
+      {
+        "heading": "Propiedad intelectual",
+        "body": "La marca ReservaNex, su logo y los contenidos de esta web pertenecen a sus responsables y no pueden reproducirse sin autorización."
+      },
+      {
+        "heading": "Disponibilidad del contenido",
+        "body": "Podemos actualizar los contenidos de esta web, incluyendo funcionalidades descriptas y condiciones de precio, sin aviso previo."
+      },
+      {
+        "heading": "Contrato de servicio",
+        "body": "El uso del producto ReservaNex por parte de una inmobiliaria se rige por las condiciones comerciales acordadas al momento de la contratación, no por este documento."
+      },
+      {
+        "heading": "Datos de la empresa responsable",
+        "body": "[Completar con razón social, domicilio legal, datos de contacto y jurisdicción antes de publicar en producción]."
+      }
+    ]
+  }
+}

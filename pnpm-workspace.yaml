@@ -1,0 +1,20 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# next: pinned because packages/supabase's peer dependency on `next` (range
+# >=15.0.0) was independently resolving to an older 15.5.19 than the apps'
+# own direct 15.5.25 — that stale copy carried its own bundled sharp/postcss
+# with real CVEs. This override forces one consistent, patched resolution
+# workspace-wide (verified via `pnpm -r why next`).
+#
+# brace-expansion/js-yaml/browserslist overrides were tried and reverted:
+# this pnpm version (9.15.4) does not apply pnpm-workspace.yaml overrides to
+# those transitive-only packages (confirmed via `pnpm install --force` +
+# re-checking pnpm-lock.yaml — versions never changed). All three are
+# exclusively dev/lint/build-tooling dependencies (eslint's minimatch chain,
+# eslint's config-file YAML parser, autoprefixer's browser-target list) that
+# never reach production runtime — see docs/backlog.md for the accepted-risk
+# writeup. Revisit if the pnpm version is upgraded.
+overrides:
+  next: ^15.5.25

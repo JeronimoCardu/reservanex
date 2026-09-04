@@ -1,0 +1,6 @@
+{
+  "name": "@orderflow/config",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Shared TypeScript, ESLint, and Prettier configs"
+}

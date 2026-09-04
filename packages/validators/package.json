@@ -1,0 +1,20 @@
+{
+  "name": "@orderflow/validators",
+  "version": "0.0.1",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@orderflow/config": "workspace:*",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  }
+}

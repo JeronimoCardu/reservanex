@@ -1,0 +1,26 @@
+-- Migration: 20260710000004_whatsapp_accounts_restrict_receptionist
+--
+-- Problem:
+--   The policy "receptionist_select_whatsapp_accounts" granted SELECT on the entire
+--   whatsapp_accounts table to authenticated receptionists via the browser client.
+--   Although the access_token_encrypted column is masked in server actions (returning
+--   only has_token: boolean), a receptionist could call:
+--     supabase.from('whatsapp_accounts').select('access_token_encrypted')
+--   from the browser and retrieve the raw Meta/WhatsApp API token.
+--
+-- Fix:
+--   Drop the receptionist SELECT policy. No UI component or server action uses the
+--   Supabase browser client to query whatsapp_accounts:
+--   - getWhatsAppSettingsAction uses the server client (JWT, server-side only) and
+--     returns only {has_token: boolean} — never the token itself.
+--   - saveWhatsAppSettingsAction / deactivateWhatsAppAccountAction use createAdminClient()
+--     and are owner-only.
+--   - The worker reads the token with the service role key — unaffected.
+--
+-- After this migration:
+--   - owner: still has full CRUD via "owner_all_whatsapp_accounts"
+--   - super_admin impersonating: still has full CRUD via "sa_imp_all_whatsapp_accounts"
+--   - receptionist: no direct DB access to whatsapp_accounts (server action is the only path)
+--   - RLS is enabled on the table, so no policy = no access for authenticated role
+
+DROP POLICY IF EXISTS "receptionist_select_whatsapp_accounts" ON public.whatsapp_accounts;
