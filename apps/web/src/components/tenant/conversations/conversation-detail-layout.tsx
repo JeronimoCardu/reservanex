@@ -215,6 +215,11 @@ interface ConversationDetailLayoutProps {
   tenantId:                string
   tenantPayment?:          TenantPayment | null
   tenantPublicSite?:       TenantPublicSite | null
+  // Fase 2B §16 — AutoResponder conversations are answered by humans from
+  // WhatsApp / WhatsApp Web. ReservaNex never sends for that provider, so
+  // the composer is replaced by an explanatory notice instead of offering a
+  // button that would always fail.
+  isAutoResponderChannel?: boolean
 }
 
 export function ConversationDetailLayout({
@@ -232,6 +237,7 @@ export function ConversationDetailLayout({
   tenantId,
   tenantPayment,
   tenantPublicSite,
+  isAutoResponderChannel = false,
 }: ConversationDetailLayoutProps) {
   const router = useRouter()
   const [, startTransition]                      = useTransition()
@@ -542,6 +548,15 @@ export function ConversationDetailLayout({
             tenantUsers={tenantUsers}
             outboundTrackingMap={outboundTrackingMap}
           />
+          {isAutoResponderChannel ? (
+            // Fase 2B §16 — no composer for AutoResponder: ReservaNex has no
+            // outbound transport for this provider (the AI answers inside the
+            // webhook's own response; humans answer from the phone). Showing
+            // a send box here would only ever produce a failed delivery.
+            <div className="border-t bg-muted/20 px-4 py-3 text-center text-sm text-muted-foreground">
+              Las respuestas humanas se gestionan desde WhatsApp / WhatsApp Web.
+            </div>
+          ) : (
           <SendMessageForm
             conversationId={initialConversation.id}
             disabled={isClosed}
@@ -557,6 +572,7 @@ export function ConversationDetailLayout({
               propertyPublished: conversation.property?.published ?? false,
             } : null}
           />
+          )}
         </div>
 
         {/* Sidebar: property + notes/tasks/reservations */}

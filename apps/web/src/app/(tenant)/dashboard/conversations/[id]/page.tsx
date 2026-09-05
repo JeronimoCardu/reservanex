@@ -40,6 +40,22 @@ export default async function ConversationDetailPage({
     })(),
   ])
 
+  // Fase 2B — is this conversation's channel AutoResponder? Human replies
+  // for that provider happen in WhatsApp / WhatsApp Web, so the CRM composer
+  // must not offer to send from here (§16). Resolved from the conversation's
+  // canonical account; a legacy conversation with no account (or a Meta one)
+  // keeps the composer.
+  const isAutoResponderChannel = await (async () => {
+    if (!conversation.whatsapp_account_id) return false
+    const supabase = await createClient()
+    const { data } = await supabase
+      .from('whatsapp_accounts')
+      .select('provider')
+      .eq('id', conversation.whatsapp_account_id)
+      .maybeSingle()
+    return data?.provider === 'autoresponder'
+  })()
+
   // Fase 8 "outbound ACK" — fetched after messages resolve since it's keyed
   // by their ids. Only outbound (human/ai) messages will ever have a row;
   // inbound customer messages simply won't appear in the returned map.
@@ -61,6 +77,7 @@ export default async function ConversationDetailPage({
       tenantId={ctx.tenantId}
       tenantPayment={tenantData ?? null}
       tenantPublicSite={tenantData ?? null}
+      isAutoResponderChannel={isAutoResponderChannel}
     />
   )
 }

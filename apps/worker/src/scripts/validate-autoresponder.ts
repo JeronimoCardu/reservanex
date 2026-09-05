@@ -30,6 +30,8 @@ import { createClient } from '../lib/supabase'
 import { assertSafeSupabaseTarget } from '../lib/assert-safe-target'
 import { hashDeviceToken } from '../lib/device-token'
 import { processMessage } from '../processor'
+import { executeEscalateToHuman } from '../tools/escalate-to-human'
+import { handoffModeForProvider } from '../lib/human-handoff'
 import { AUTORESPONDER_APP_PACKAGE, WHATSAPP_BUSINESS_PACKAGE } from '../providers/autoresponder/inbound'
 import type { Database } from '@orderflow/types'
 
@@ -207,6 +209,185 @@ async function main(): Promise<void> {
       nok('F/H. media_events must stay empty', `got ${mediaEvents?.length} row(s)`)
     }
 
+    // ═══ Fase 2B — AI → HUMAN → AI handoff ═══════════════════════════════════
+    // Uses a short window so the whole lifecycle runs in seconds instead of
+    // an hour. This is exactly what HUMAN_HANDOFF_TIMEOUT_MS exists for (§5).
+    const previousTimeout = process.env.HUMAN_HANDOFF_TIMEOUT_MS
+    process.env.HUMAN_HANDOFF_TIMEOUT_MS = '4000'
+    try {
+      const convId = customerMsg.conversation_id
+
+      // ── 2B-A. Handoff: force it deterministically through the same
+      //    structured mechanism the AI uses (escalate_to_human).
+      await executeEscalateToHuman(tenantId, convId, 'human_requested', handoffModeForProvider('autoresponder'))
+
+      const { data: afterHandoff } = await supabase
+        .from('conversations').select('ai_mode, human_until').eq('id', convId).single()
+      const untilMs = afterHandoff?.human_until ? new Date(afterHandoff.human_until).getTime() : 0
+      if (afterHandoff?.ai_mode !== 'autonomous' && untilMs > Date.now()) {
+        ok('2B-A. Handoff → ai_mode non-autonomous and human_until set in the future')
+      } else {
+        nok('2B-A. Handoff state', JSON.stringify(afterHandoff))
+      }
+
+      // ── 2B-B. Inbound during HUMAN: persisted, window slid, silent, no LLM.
+      const duringPayload = autoResponderPayload(senderPhone, '¿Hay alguien ahí? Sigo esperando')
+      const beforeAiCount = (await supabase.from('messages').select('id')
+        .eq('conversation_id', convId).eq('sender_type', 'ai')).data?.length ?? 0
+
+      const duringResult = await processMessage(
+        queueRowFor(tenantId, account.id, duringPayload),
+        { timeoutMs: SYNC_TIMEOUT_MS },
+      )
+
+      if ((duringResult?.replyText ?? null) === null) {
+        ok('2B-B. Inbound during HUMAN → replies[] empty (silence)')
+      } else {
+        nok('2B-B. Must stay silent during HUMAN', JSON.stringify(duringResult))
+      }
+
+      const { data: duringInbound } = await supabase
+        .from('messages').select('id, created_at')
+        .eq('tenant_id', tenantId).eq('whatsapp_message_id', duringPayload._internal_event_id).maybeSingle()
+      if (duringInbound) {
+        ok('2B-B. The inbound sent during HUMAN is still persisted (audit/metrics)')
+      } else {
+        nok('2B-B. Inbound during HUMAN must be persisted', 'not found')
+      }
+
+      const afterAiCount = (await supabase.from('messages').select('id')
+        .eq('conversation_id', convId).eq('sender_type', 'ai')).data?.length ?? 0
+      if (afterAiCount === beforeAiCount) {
+        ok('2B-B. No AI message was created during HUMAN (DeepSeek not called)')
+      } else {
+        nok('2B-B. AI message count changed during HUMAN', `${beforeAiCount} → ${afterAiCount}`)
+      }
+
+      // ── 2B-C. The window slid forward on that inbound.
+      const { data: afterSlide } = await supabase
+        .from('conversations').select('human_until').eq('id', convId).single()
+      const slidMs = afterSlide?.human_until ? new Date(afterSlide.human_until).getTime() : 0
+      if (slidMs > untilMs) {
+        ok('2B-C. Each inbound during HUMAN extends the sliding window')
+      } else {
+        nok('2B-C. Sliding window did not extend', `before=${untilMs} after=${slidMs}`)
+      }
+
+      // ── 2B-G. Media during HUMAN → silence, NOT the media fallback (§18).
+      const mediaDuringPayload = autoResponderPayload(senderPhone, '🎤 Voice message (0:05)')
+      const mediaDuringResult  = await processMessage(
+        queueRowFor(tenantId, account.id, mediaDuringPayload),
+        { timeoutMs: SYNC_TIMEOUT_MS },
+      )
+      if ((mediaDuringResult?.replyText ?? null) === null) {
+        ok('2B-G. Media during HUMAN → silence, never the "send it as text" fallback')
+      } else {
+        nok('2B-G. Media during HUMAN must be silent', JSON.stringify(mediaDuringResult))
+      }
+
+      // ── 2B-D/E/F. Let the window lapse, then the next inbound reactivates
+      //    the AI, is answered, and the context is bounded at that message.
+      await new Promise((r) => setTimeout(r, 4500))
+
+      const reactivatePayload = autoResponderPayload(senderPhone, '¿Seguimos? Quiero avanzar con la reserva')
+      const reactivateResult  = await processMessage(
+        queueRowFor(tenantId, account.id, reactivatePayload),
+        { timeoutMs: SYNC_TIMEOUT_MS },
+      )
+
+      if ((reactivateResult?.replyText ?? '').trim().length > 0) {
+        ok(`2B-D. Expired window → THIS same inbound is answered by the AI ("${(reactivateResult?.replyText ?? '').slice(0, 45)}...")`)
+      } else {
+        nok('2B-D. Expired window must reactivate the AI for this inbound', JSON.stringify(reactivateResult))
+      }
+
+      const { data: afterReactivate } = await supabase
+        .from('conversations').select('ai_mode, human_until, ai_context_reset_at').eq('id', convId).single()
+      if (afterReactivate?.ai_mode === 'autonomous' && afterReactivate.human_until === null) {
+        ok('2B-D. Conversation is back to autonomous with the window cleared')
+      } else {
+        nok('2B-D. Post-expiry conversation state', JSON.stringify(afterReactivate))
+      }
+
+      const { data: reactivateInbound } = await supabase
+        .from('messages').select('created_at')
+        .eq('tenant_id', tenantId).eq('whatsapp_message_id', reactivatePayload._internal_event_id).maybeSingle()
+
+      if (afterReactivate?.ai_context_reset_at && reactivateInbound?.created_at
+          && new Date(afterReactivate.ai_context_reset_at).getTime() === new Date(reactivateInbound.created_at).getTime()) {
+        ok('2B-E/F. ai_context_reset_at == the reactivating inbound\'s own timestamp (it is IN context; everything before is OUT)')
+      } else {
+        nok('2B-E/F. Context boundary', `reset=${afterReactivate?.ai_context_reset_at} inbound=${reactivateInbound?.created_at}`)
+      }
+
+      // ── 2B-E (effect, not just the stamp): the boundary really does cut the
+      //    transcript. Same filter context/responder.ts applies to build the
+      //    prompt — everything from before the human stretch is excluded,
+      //    the reactivating inbound is included.
+      if (afterReactivate?.ai_context_reset_at) {
+        const allMsgs = (await supabase.from('messages').select('id')
+          .eq('conversation_id', convId)).data?.length ?? 0
+        const visibleMsgs = (await supabase.from('messages').select('id, whatsapp_message_id')
+          .eq('conversation_id', convId)
+          .gte('created_at', afterReactivate.ai_context_reset_at)).data ?? []
+
+        const includesReactivator = visibleMsgs.some(
+          (m) => m.whatsapp_message_id === reactivatePayload._internal_event_id,
+        )
+        if (visibleMsgs.length < allMsgs && includesReactivator) {
+          ok(`2B-E. Context filter excludes the pre-handoff transcript (${allMsgs} total → ${visibleMsgs.length} visible) and keeps the reactivating message`)
+        } else {
+          nok('2B-E. Context filter effect', `all=${allMsgs} visible=${visibleMsgs.length} includesReactivator=${includesReactivator}`)
+        }
+      }
+
+      // ── 2B-J. Concurrency (§14 C): two inbounds racing on the SAME expiry
+      //    must not both perform the reactivation. Re-arm a window, let it
+      //    lapse, then fire two processMessage calls at once. timeoutMs=1
+      //    aborts the LLM immediately — the handoff gate runs before it, so
+      //    the race is exercised without burning two DeepSeek turns.
+      await executeEscalateToHuman(tenantId, convId, 'human_requested', handoffModeForProvider('autoresponder'))
+      await supabase
+        .from('conversations')
+        .update({ human_until: new Date(Date.now() - 1000).toISOString() })
+        .eq('id', convId)
+
+      const raceA = autoResponderPayload(senderPhone, 'carrera A')
+      const raceB = autoResponderPayload(senderPhone, 'carrera B')
+      await Promise.all([
+        processMessage(queueRowFor(tenantId, account.id, raceA), { timeoutMs: 1 }).catch(() => undefined),
+        processMessage(queueRowFor(tenantId, account.id, raceB), { timeoutMs: 1 }).catch(() => undefined),
+      ])
+
+      const { data: afterRace } = await supabase
+        .from('conversations').select('ai_mode, human_until, ai_context_reset_at').eq('id', convId).single()
+      const { data: raceInbounds } = await supabase
+        .from('messages').select('created_at, whatsapp_message_id')
+        .eq('tenant_id', tenantId)
+        .in('whatsapp_message_id', [raceA._internal_event_id, raceB._internal_event_id])
+
+      const resetMatchesOneInbound = (raceInbounds ?? []).some(
+        (m) => afterRace?.ai_context_reset_at
+          && new Date(m.created_at).getTime() === new Date(afterRace.ai_context_reset_at).getTime(),
+      )
+      if (afterRace?.ai_mode === 'autonomous' && afterRace.human_until === null && resetMatchesOneInbound) {
+        ok('2B-J. Two inbounds racing on the same expiry → exactly one coherent reactivation (guarded UPDATE)')
+      } else {
+        nok('2B-J. Concurrent reactivation', JSON.stringify(afterRace))
+      }
+
+      const { data: outboxAfter2B } = await supabase
+        .from('messaging_outbox').select('id').eq('conversation_id', convId)
+      if (outboxAfter2B?.length === 0) {
+        ok('2B-L. The whole handoff lifecycle created zero messaging_outbox rows')
+      } else {
+        nok('2B-L. Handoff must not touch outbox', `got ${outboxAfter2B?.length}`)
+      }
+    } finally {
+      if (previousTimeout === undefined) delete process.env.HUMAN_HANDOFF_TIMEOUT_MS
+      else process.env.HUMAN_HANDOFF_TIMEOUT_MS = previousTimeout
+    }
+
     // ── D. Timeout → no reply, no ghost AI message, no outbox ─────────────────
     const timeoutPayload = autoResponderPayload(senderPhone, '¿Cuál es la dirección exacta y cómo llego en auto?')
     const timeoutResult  = await processMessage(
@@ -280,6 +461,47 @@ async function main(): Promise<void> {
         .eq('tenant_id', tenantId).eq('whatsapp_message_id', metaWamid).maybeSingle()
       if (metaMsg) {
         createdConversationIds.push(metaMsg.conversation_id)
+
+        // ── 2B-K. Meta handoff semantics must NOT have changed. Before Fase
+        //    2B a Meta escalation left the conversation manual FOREVER, until
+        //    someone reactivated the AI from the CRM. Reusing
+        //    executeEscalateToHuman() must not have given Meta the sliding
+        //    window: human_until stays NULL and the conversation stays manual
+        //    even far past any timeout.
+        await executeEscalateToHuman(
+          tenantId, metaMsg.conversation_id, 'human_requested', handoffModeForProvider('meta'),
+        )
+        const { data: metaAfterHandoff } = await supabase
+          .from('conversations').select('ai_mode, human_until')
+          .eq('id', metaMsg.conversation_id).single()
+
+        if (metaAfterHandoff?.ai_mode !== 'autonomous' && metaAfterHandoff?.human_until === null) {
+          ok('2B-K. Meta handoff stays PERMANENT — manual with human_until NULL (pre-Fase-2B semantics preserved)')
+        } else {
+          nok('2B-K. Meta must not inherit the sliding window', JSON.stringify(metaAfterHandoff))
+        }
+
+        // And a later customer inbound must NOT auto-reactivate it.
+        const metaFollowUp = `wamid.test-${randomUUID()}`
+        await processMessage(
+          queueRowFor(tenantId, metaAccount.id, {
+            entry: [{ changes: [{ value: { messages: [{
+              from: metaPhone, id: metaFollowUp, type: 'text', text: { body: 'sigo ahi?' },
+            }] } }] }],
+          }),
+          { timeoutMs: SYNC_TIMEOUT_MS },
+        )
+        const { data: metaAfterFollowUp } = await supabase
+          .from('conversations').select('ai_mode, human_until, ai_context_reset_at')
+          .eq('id', metaMsg.conversation_id).single()
+
+        if (metaAfterFollowUp?.ai_mode !== 'autonomous'
+            && metaAfterFollowUp?.human_until === null
+            && metaAfterFollowUp?.ai_context_reset_at === null) {
+          ok('2B-K. A later Meta inbound does not auto-reactivate the AI and never stamps a context reset')
+        } else {
+          nok('2B-K. Meta auto-reactivation regression', JSON.stringify(metaAfterFollowUp))
+        }
         const { data: metaContact } = await supabase
           .from('contacts').select('id').eq('tenant_id', tenantId).eq('phone', metaPhone).maybeSingle()
         if (metaContact) createdContactIds.push(metaContact.id)

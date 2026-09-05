@@ -14,6 +14,7 @@ import { sendPropertyLinkTool, executeSendPropertyLink }                        
 import { sendPaymentDataTool, executeSendPaymentData }                             from '../tools/send-payment-data'
 import { saveContactNameTool, executeSaveContactName }                             from '../tools/save-contact-name'
 import { findDateMismatches, buildMismatchReply }                                  from '../tools/date-preprocessor'
+import { HUMAN_HANDOFF_MESSAGE, handoffModeForProvider } from '../lib/human-handoff'
 
 const DEFAULT_SYSTEM_PROMPT =
   'Eres un asistente de atención al cliente. Responde de forma clara, amable y concisa.'
@@ -122,9 +123,10 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
   const supabase = createClient()
 
   // 0. Check conversation mode — escalate_to_human sets ai_mode='manual'; skip AI response.
+  //    Also reads the Fase 2B conversation-history boundary (see step 5).
   const { data: conv } = await supabase
     .from('conversations')
-    .select('ai_mode')
+    .select('ai_mode, ai_context_reset_at')
     .eq('id', ctx.conversationId)
     .eq('tenant_id', ctx.tenantId)
     .single()
@@ -197,12 +199,17 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
         conversationId: ctx.conversationId,
         keyword:        matchedKeyword,
       })
-      try { await executeEscalateToHuman(ctx.tenantId, ctx.conversationId) } catch { /* non-fatal */ }
+      try {
+        await executeEscalateToHuman(
+          ctx.tenantId, ctx.conversationId, 'human_requested', handoffModeForProvider(ctx.provider),
+        )
+      } catch { /* non-fatal */ }
       await applyDelay(delayMs)
       return {
-        text:         'Te derivo con un asesor. En breve se van a poner en contacto con vos.',
-        finishReason: 'keyword_escalation',
-        model:        'system',
+        text:             HUMAN_HANDOFF_MESSAGE,
+        finishReason:     'keyword_escalation',
+        model:            'system',
+        handoffRequested: true,
       }
     }
   }
@@ -534,10 +541,21 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
     `[Gestión de reservas]\n${reservationLine}`
 
   // 5. Fetch recent conversation history
-  const { data: rows } = await supabase
+  // Fase 2B — ai_context_reset_at bounds the transcript. It is stamped when
+  // an inbound reactivates the AI after a HUMAN window lapsed: during that
+  // window a human answered from WhatsApp Web, and ReservaNex only stored
+  // the CUSTOMER's half. Feeding that half back would let the model infer
+  // it had already replied — so everything before the boundary is excluded.
+  // Structured memory (contact name, property, lead_context, reservations)
+  // is unaffected; it is read from its own columns, not from this list.
+  let historyQuery = supabase
     .from('messages')
     .select('sender_type, content')
     .eq('conversation_id', ctx.conversationId)
+  if (conv?.ai_context_reset_at) {
+    historyQuery = historyQuery.gte('created_at', conv.ai_context_reset_at)
+  }
+  const { data: rows } = await historyQuery
     .order('created_at', { ascending: false })
     .limit(maxContext)
 
@@ -565,6 +583,11 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
   // the usage persisted by writeMemory() reflects the true total, not just
   // the last call's usage.
   let turnUsage: LLMUsage = { inputTokens: 0, outputTokens: 0 }
+  // Fase 2B — set when the model calls escalate_to_human during this turn.
+  // The tool itself flips the conversation to HUMAN; this flag makes the
+  // FINAL customer-facing text the controlled handoff sentence instead of
+  // whatever farewell the model improvises afterwards (§7).
+  let handoffViaTool = false
 
   for (let i = 0; i < maxTurns; i++) {
     const result = await callLLM({
@@ -577,6 +600,18 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
     // No tool calls → final text response
     if (result.finishReason !== 'tool_calls' || !result.toolCalls?.length) {
       await applyDelay(delayMs)
+      if (handoffViaTool) {
+        // The conversation is already HUMAN (the tool committed that). The
+        // customer's last message from the AI must be the controlled
+        // sentence, not the model's own wording.
+        return {
+          ...result,
+          text:             HUMAN_HANDOFF_MESSAGE,
+          finishReason:     'tool_escalation',
+          usage:            turnUsage,
+          handoffRequested: true,
+        }
+      }
       return { ...result, usage: turnUsage }
     }
 
@@ -586,10 +621,13 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
         conversationId: ctx.conversationId,
         maxTurns,
       })
-      try { await executeEscalateToHuman(ctx.tenantId, ctx.conversationId) } catch { /* non-fatal */ }
-      const escalationText = 'Te paso con uno de nuestros asesores que te va a ayudar en breve.'
+      try {
+        await executeEscalateToHuman(
+          ctx.tenantId, ctx.conversationId, 'human_requested', handoffModeForProvider(ctx.provider),
+        )
+      } catch { /* non-fatal */ }
       await applyDelay(delayMs)
-      return { text: escalationText, finishReason: 'max_turns_escalation', model: 'system', usage: turnUsage }
+      return { text: HUMAN_HANDOFF_MESSAGE, finishReason: 'max_turns_escalation', model: 'system', usage: turnUsage, handoffRequested: true }
     }
 
     // Append assistant turn (with tool calls) to message history
@@ -681,7 +719,10 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
         } else if (toolCall.name === 'search_properties') {
           toolResult = await executeSearchProperties(ctx.tenantId, toolCall.args)
         } else if (toolCall.name === 'escalate_to_human') {
-          toolResult = await executeEscalateToHuman(ctx.tenantId, ctx.conversationId)
+          toolResult = await executeEscalateToHuman(
+            ctx.tenantId, ctx.conversationId, 'human_requested', handoffModeForProvider(ctx.provider),
+          )
+          handoffViaTool = true
         } else if (toolCall.name === 'create_pending_reservation') {
           toolResult = await executeCreatePendingReservation(ctx.tenantId, ctx.conversationId, ctx.contactId, toolCall.args)
         } else if (toolCall.name === 'cancel_recent_reservation') {
@@ -714,8 +755,10 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
   }
 
   // Should not reach here — the loop handles the last iteration gracefully above
-  await executeEscalateToHuman(ctx.tenantId, ctx.conversationId).catch(() => undefined)
-  return { text: 'Te paso con uno de nuestros asesores que te va a ayudar en breve.', finishReason: 'max_turns_escalation', model: 'system', usage: turnUsage }
+  await executeEscalateToHuman(
+    ctx.tenantId, ctx.conversationId, 'human_requested', handoffModeForProvider(ctx.provider),
+  ).catch(() => undefined)
+  return { text: HUMAN_HANDOFF_MESSAGE, finishReason: 'max_turns_escalation', model: 'system', usage: turnUsage, handoffRequested: true }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

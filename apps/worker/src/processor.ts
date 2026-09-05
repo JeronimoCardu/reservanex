@@ -10,6 +10,13 @@ import { downloadMetaMedia, uploadWhatsAppMediaToStorage } from './whatsapp/medi
 import { transcribeAudio } from './whatsapp/transcribe'
 import { executeEscalateToHuman } from './tools/escalate-to-human'
 import { decideAutoResponderDelivery } from './providers/autoresponder/delivery-decision'
+import {
+  decideHumanMode,
+  computeHumanUntilIso,
+  getHumanHandoffTimeoutMs,
+  handoffModeForProvider,
+  HUMAN_HANDOFF_MESSAGE,
+} from './lib/human-handoff'
 
 // Resolves which provider to dispatch THROUGH: the CONVERSATION's canonical
 // account's real provider column — NOT ctx.provider, which only reflects the
@@ -89,11 +96,9 @@ async function deliverAIReply(
   return { aiMessageId, dispatch: outboundWamid ?? 'not sent' }
 }
 
-// Fixed handoff message sent as the last AI response when the cycle limit is reached.
-// Must not mention: IA, Meta, WhatsApp, limits, costs, or plan.
-const AI_HANDOFF_MESSAGE =
-  'Para seguir ayudándote bien, voy a pasar esta conversación a una persona de la inmobiliaria.\n\n' +
-  'En breve alguien del equipo te responde por acá.'
+// Fase 2B — the auto-reply-limit handoff now uses the single shared
+// HUMAN_HANDOFF_MESSAGE (lib/human-handoff.ts) like every other handoff
+// path, so the customer always hears the same sentence before silence.
 
 const AUDIO_TRANSCRIPTION_FAILED_TEXT =
   'Recibí tu audio, pero no pude transcribirlo automáticamente. Un asesor lo va a revisar.'
@@ -128,17 +133,21 @@ async function sendFixedAudioFallbackAndEscalate(
     return
   }
 
-  const fixedResult: LLMResult = { text, finishReason, model: 'system' }
-  await deliverAIReply(ctx, fixedResult)
-
-  // Escalate to human: sets ai_mode='manual', needs_human_attention=true,
-  // human_attention_requested_at=now(). Non-fatal — reply already sent.
-  await executeEscalateToHuman(ctx.tenantId, ctx.conversationId).catch((escalErr: unknown) => {
+  // Fase 2B §8 — escalate FIRST, then deliver. This text promises "un asesor
+  // lo va a revisar"; if the escalation update failed after the customer
+  // already read that, the AI would keep answering over the human. Silence
+  // after a failed delivery is the recoverable direction.
+  await executeEscalateToHuman(
+    ctx.tenantId, ctx.conversationId, 'human_requested', handoffModeForProvider(ctx.provider),
+  ).catch((escalErr: unknown) => {
     console.warn('[processor:audio] escalation update failed (non-fatal)', {
       conversationId: ctx.conversationId,
       error:          escalErr instanceof Error ? escalErr.message : String(escalErr),
     })
   })
+
+  const fixedResult: LLMResult = { text, finishReason, model: 'system' }
+  await deliverAIReply(ctx, fixedResult)
   console.log('[processor:audio] sent fixed reply and escalated to human', {
     conversationId: ctx.conversationId,
     finishReason,
@@ -248,12 +257,18 @@ async function runAIPipeline(ctx: MessageContext, signal?: AbortSignal): Promise
     if (!slot?.claimed) {
       // Already at limit or conversation switched to manual between enqueue and now.
       // Ensure manual mode + human attention are set (idempotent).
+      const atLimitNowMs = Date.now()
       await supabase
         .from('conversations')
         .update({
           ai_mode:                      'manual',
           needs_human_attention:        true,
-          human_attention_requested_at: new Date().toISOString(),
+          human_attention_requested_at: new Date(atLimitNowMs).toISOString(),
+          // Fase 2B correction — the sliding window is AutoResponder-only.
+          // Meta keeps its pre-2B semantics: manual, no auto-revert.
+          human_until:                  handoffModeForProvider(ctx.provider) === 'temporary'
+            ? computeHumanUntilIso(atLimitNowMs, getHumanHandoffTimeoutMs())
+            : null,
         })
         .eq('id', ctx.conversationId)
         .eq('tenant_id', ctx.tenantId)
@@ -271,25 +286,36 @@ async function runAIPipeline(ctx: MessageContext, signal?: AbortSignal): Promise
       // This is the final slot (count == limit). Send the fixed handoff message.
       // Do NOT call the LLM — the handoff text is deterministic.
       const handoffResult: LLMResult = {
-        text:         AI_HANDOFF_MESSAGE,
-        finishReason: 'auto_reply_limit',
-        model:        'system',
+        text:             HUMAN_HANDOFF_MESSAGE,
+        finishReason:     'auto_reply_limit',
+        model:            'system',
+        handoffRequested: true,
       }
 
-      const { aiMessageId, dispatch: dispatchInfo } = await deliverAIReply(ctx, handoffResult)
-
-      // Transition conversation to manual mode with full handoff metadata.
+      // Fase 2B §8 — fail-safe ordering: commit the HUMAN state BEFORE the
+      // customer is told a human is coming. If delivery then fails, the
+      // conversation is merely silent (recoverable, and a human is already
+      // flagged for it). The reverse order risks telling the customer "an
+      // advisor will contact you" and then, because the UPDATE failed,
+      // having the AI answer their next message on top of the human.
+      const limitNowMs = Date.now()
       await supabase
         .from('conversations')
         .update({
           ai_mode:                      'manual',
           needs_human_attention:        true,
-          human_attention_requested_at: new Date().toISOString(),
+          human_attention_requested_at: new Date(limitNowMs).toISOString(),
           ai_handoff_reason:            'auto_reply_limit',
-          ai_handoff_at:                new Date().toISOString(),
+          ai_handoff_at:                new Date(limitNowMs).toISOString(),
+          // Fase 2B correction — AutoResponder-only sliding window (§20).
+          human_until:                  handoffModeForProvider(ctx.provider) === 'temporary'
+            ? computeHumanUntilIso(limitNowMs, getHumanHandoffTimeoutMs())
+            : null,
         })
         .eq('id', ctx.conversationId)
         .eq('tenant_id', ctx.tenantId)
+
+      const { aiMessageId, dispatch: dispatchInfo } = await deliverAIReply(ctx, handoffResult)
 
       console.log('[processor:slot] limit reached — handoff message sent', {
         conversationId:  ctx.conversationId,
@@ -327,6 +353,136 @@ async function runAIPipeline(ctx: MessageContext, signal?: AbortSignal): Promise
       contactPhone:   ctx.contactPhone,
     })
   }
+}
+
+// ── Fase 2B: the HUMAN handoff gate ─────────────────────────────────────────
+// Decides, for ONE inbound, whether the AI may answer at all.
+//
+//   human_active     → slide the window, stay silent (no LLM, no AI message)
+//   human_expired    → atomically hand the conversation back to the AI,
+//                      stamp the context boundary, and let THIS SAME inbound
+//                      be answered (§10 — the customer must not have to send
+//                      a second message)
+//   ai               → nothing to do
+//   manual_no_expiry → a human took the conversation over from the CRM;
+//                      stays silent until someone reactivates the AI there
+//
+// Returns 'silent' when the caller must stop and answer {"replies": []}.
+//
+// Provider-agnostic by design: AI/HUMAN semantics live on the conversation,
+// so Meta gets the same gate. Only the transport of the eventual reply
+// differs, and that is decided later in deliverAIReply() — Meta is NOT
+// adapted to the replies[] contract (§20).
+async function applyHumanHandoffGate(ctx: MessageContext): Promise<'silent' | 'continue'> {
+  const supabase = createClient()
+
+  const { data: conv, error } = await supabase
+    .from('conversations')
+    .select('ai_mode, human_until')
+    .eq('id', ctx.conversationId)
+    .eq('tenant_id', ctx.tenantId)
+    .maybeSingle()
+
+  if (error || !conv) {
+    // Cannot read the state. Continue rather than silencing the conversation
+    // forever on a transient read error: generateAIReply() does its own
+    // independent ai_mode check before spending a token, so a genuinely
+    // non-autonomous conversation still stays silent one layer down.
+    console.warn('[processor:handoff] could not read conversation state — continuing', {
+      conversationId: ctx.conversationId,
+      error:          error?.message,
+    })
+    return 'continue'
+  }
+
+  const nowMs    = Date.now()
+  const decision = decideHumanMode({ ai_mode: conv.ai_mode, human_until: conv.human_until }, nowMs)
+
+  if (decision.mode === 'ai') return 'continue'
+
+  if (decision.mode === 'manual_no_expiry') {
+    console.log('[processor:handoff] conversation is manual with no expiry — staying silent', {
+      conversationId: ctx.conversationId,
+    })
+    return 'silent'
+  }
+
+  if (decision.mode === 'human_active') {
+    // Sliding window: every customer inbound pushes the expiry out again,
+    // measured from THIS message (§2).
+    const nextUntil = computeHumanUntilIso(nowMs, getHumanHandoffTimeoutMs())
+    const { error: extendErr } = await supabase
+      .from('conversations')
+      .update({ human_until: nextUntil, updated_at: new Date(nowMs).toISOString() })
+      .eq('id', ctx.conversationId)
+      .eq('tenant_id', ctx.tenantId)
+
+    if (extendErr) {
+      // Non-fatal: the window just doesn't slide this time. Staying silent is
+      // still the correct, fail-safe outcome (§8).
+      console.warn('[processor:handoff] could not extend the HUMAN window (non-fatal)', {
+        conversationId: ctx.conversationId,
+        error:          extendErr.message,
+      })
+    }
+
+    console.log('[processor:handoff] HUMAN active — inbound persisted, staying silent', {
+      conversationId: ctx.conversationId,
+      humanUntil:     nextUntil,
+    })
+    return 'silent'
+  }
+
+  // decision.mode === 'human_expired' — hand back to the AI.
+  //
+  // The guard clauses make this transition atomic: only the request whose
+  // UPDATE still matches (non-autonomous, and holding the SAME expired
+  // human_until we just read) performs the reactivation. A second inbound
+  // racing on the same expiry matches zero rows and simply proceeds — it
+  // cannot reset the context a second time (§14 C).
+  //
+  // ai_context_reset_at is stamped with the INBOUND MESSAGE's own created_at,
+  // not now(): buildContext() already inserted that row, so stamping now()
+  // would put the boundary AFTER it and the very message that reactivated
+  // the AI would be excluded from its own context (§22 F).
+  const { data: inboundMsg } = await supabase
+    .from('messages')
+    .select('created_at')
+    .eq('id', ctx.messageId)
+    .maybeSingle()
+
+  const resetAt = inboundMsg?.created_at ?? new Date(nowMs).toISOString()
+
+  // decideHumanMode only returns 'human_expired' when human_until was a
+  // parseable non-null timestamp, so this narrowing is sound — it exists to
+  // let the race guard below compare against that exact value.
+  const expiredUntil = conv.human_until ?? ''
+
+  const { data: reactivated } = await supabase
+    .from('conversations')
+    .update({
+      ai_mode:                'autonomous',
+      human_until:            null,
+      ai_context_reset_at:    resetAt,
+      needs_human_attention:  false,
+      ai_auto_replies_count:  0,
+      ai_handoff_reason:      null,
+      ai_handoff_at:          null,
+      updated_at:             new Date(nowMs).toISOString(),
+    })
+    .eq('id', ctx.conversationId)
+    .eq('tenant_id', ctx.tenantId)
+    .neq('ai_mode', 'autonomous')
+    .eq('human_until', expiredUntil)
+    .select('id')
+
+  console.log('[processor:handoff] HUMAN window expired — AI reactivated for this inbound', {
+    conversationId: ctx.conversationId,
+    contextResetAt: resetAt,
+    wonRace:        (reactivated?.length ?? 0) > 0,
+  })
+
+  return 'continue'
 }
 
 // Fase 1B (AutoResponder sin MacroDroid, definitivo) — when syncOptions is
@@ -371,6 +527,15 @@ export async function processMessage(
   }
   const finish = (): ProcessMessageSyncResult | void =>
     syncOptions ? { replyText: ctx.syncReply?.captured ?? null } : undefined
+
+  // ── Fase 2B: HUMAN handoff gate ─────────────────────────────────────────────
+  // Runs BEFORE any media handling on purpose (§18): while a human is
+  // attending from WhatsApp Web, an audio/image/document must produce plain
+  // silence, NOT the "send it as text" fallback — the customer is talking to
+  // a person, who can see the media in WhatsApp themselves. Returning here
+  // also means no LLM call, no tokens, no AI message row (§9).
+  const humanGate = await applyHumanHandoffGate(ctx)
+  if (humanGate === 'silent') return finish()
 
   // Track audio transcription outcome (set inside media block, consumed after dedupe)
   let audioTranscriptionStatus: 'completed' | 'failed' | 'skipped' | null = null

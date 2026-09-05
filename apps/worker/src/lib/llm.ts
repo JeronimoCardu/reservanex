@@ -67,6 +67,11 @@ export interface LLMResult {
   model:        string
   toolCalls?:   LLMToolCall[]
   usage?:       LLMUsage
+  // Fase 2B — set by generateAIReply() when THIS turn handed the
+  // conversation to a human (keyword pre-check, the escalate_to_human tool,
+  // the max-turns bail-out, or the auto-reply limit). A structured signal:
+  // callers must never infer a handoff by pattern-matching the reply text.
+  handoffRequested?: boolean
 }
 
 // Pure accumulator — no I/O. A single generateAIReply() turn can call
