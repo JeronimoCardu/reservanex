@@ -43,11 +43,19 @@ export function normalizeAndValidatePhone(
 // changes nothing for the one real, working configuration.
 const ALLOWED_MACRODROID_HOSTNAME = 'trigger.macrodroid.com'
 
+// Fase 1B (AutoResponder sin MacroDroid, definitivo) — this URL is now
+// OPTIONAL. The active AutoResponder flow (inbound webhook → synchronous
+// internal-server.ts → replies[]) never reads macrodroid_webhook_url; it is
+// only consulted by the legacy messaging_outbox/dispatcher.ts path, which
+// no longer participates in any active flow (Fase 1B report §B). An empty
+// input is valid — it means "not configured", not an error — and resolves
+// to null. A NON-empty value still goes through the full Fase 10 SSRF
+// hardening below (https + host allowlist), unchanged.
 export function validateMacroDroidWebhookUrl(
   input: string,
-): { valid: true; url: string } | { valid: false; error: string } {
+): { valid: true; url: string | null } | { valid: false; error: string } {
   const trimmed = input.trim()
-  if (!trimmed) return { valid: false, error: 'La URL de MacroDroid es requerida.' }
+  if (!trimmed) return { valid: true, url: null }
 
   let parsed: URL
   try {
@@ -73,8 +81,13 @@ export function validateMacroDroidWebhookUrl(
 export type AutoResponderStatus = 'not_configured' | 'incomplete' | 'ready' | 'disabled'
 
 // "Listo" only means the record is well-formed and active — it does NOT mean
-// the Android/MacroDroid is online. There is no health-check yet (Fase 5
-// explicitly excludes it) — never claim "Online" from this alone.
+// the Android is online. There is no health-check yet (Fase 5 explicitly
+// excludes it) — never claim "Online" from this alone.
+//
+// Fase 1B — has_macrodroid_url no longer gates completeness. MacroDroid is
+// legacy-only in this version (see Fase 1B report §B/§F): an account with a
+// valid phone and a device token is fully functional for the active
+// AutoResponder flow without it.
 export function deriveAutoResponderStatus(row: {
   phone_number:       string
   active:             boolean
@@ -84,7 +97,7 @@ export function deriveAutoResponderStatus(row: {
   if (!row) return 'not_configured'
 
   const hasValidPhone = isValidARWhatsAppPhone(row.phone_number)
-  const isComplete    = hasValidPhone && row.has_device_token && row.has_macrodroid_url
+  const isComplete    = hasValidPhone && row.has_device_token
 
   if (!isComplete) return 'incomplete'
   return row.active ? 'ready' : 'disabled'

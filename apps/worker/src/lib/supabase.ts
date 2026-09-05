@@ -156,6 +156,39 @@ export async function claimQueueItem(): Promise<QueueRow | null> {
   return data
 }
 
+// Fase 1 (AutoResponder sin MacroDroid) — claims ONE SPECIFIC row by id,
+// used by the synchronous internal endpoint (internal-server.ts) right
+// after the webhook enqueues it, so the AI pipeline can run inline within
+// the same HTTP request instead of waiting for the next 3s poll tick.
+// Same optimistic "UPDATE ... WHERE status='pending' ... RETURNING" claim as
+// claimQueueItem() above, just scoped by id instead of "oldest pending" —
+// this is what keeps it race-safe against the regular poller: whichever of
+// the two UPDATEs commits first wins, the other affects 0 rows (PGRST116)
+// and returns null, exactly like two poll ticks racing on the same item.
+export async function claimQueueItemById(id: string): Promise<QueueRow | null> {
+  const supabase = createClient()
+
+  const { data, error } = await supabase
+    .from('message_queue')
+    .update({
+      status: 'processing',
+      processing_started_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .eq('status', 'pending')
+    .select()
+    .single()
+
+  if (error) {
+    if (error.code !== 'PGRST116') {
+      console.error('[internal-server] claimQueueItemById update error', { code: error.code, message: error.message })
+    }
+    return null
+  }
+
+  return data
+}
+
 export async function completeQueueItem(id: string): Promise<void> {
   const supabase = createClient()
   await supabase

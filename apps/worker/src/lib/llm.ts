@@ -48,6 +48,12 @@ export interface LLMCallOptions {
   tools?:     LLMTool[]
   maxTokens?: number
   model?:     string
+  // Fase 1B (AutoResponder sin MacroDroid) — an external cancellation signal
+  // (e.g. the sync webhook's own budget, see processor.ts/internal-server.ts),
+  // merged with the fixed 30s per-call timeout below. Aborting either one
+  // aborts the fetch. Optional — every existing caller keeps working with
+  // only the fixed timeout, unchanged.
+  signal?:    AbortSignal
 }
 
 export interface LLMUsage {
@@ -99,12 +105,30 @@ interface DeepSeekResponse {
 
 // ── callLLM ───────────────────────────────────────────────────────────────────
 
+// Combines the fixed per-call timeout with an optional external signal
+// without relying on AbortSignal.any (Node version/lib-typing uncertainty —
+// a manual merge is safe everywhere and easy to unit-test). Aborting either
+// input aborts the returned signal; its `reason` is whichever fired first.
+function mergeAbortSignals(a: AbortSignal, b?: AbortSignal): AbortSignal {
+  if (!b) return a
+  if (a.aborted) return a
+  if (b.aborted) return b
+
+  const controller = new AbortController()
+  const onAbortA = () => controller.abort(a.reason)
+  const onAbortB = () => controller.abort(b.reason)
+  a.addEventListener('abort', onAbortA, { once: true })
+  b.addEventListener('abort', onAbortB, { once: true })
+  return controller.signal
+}
+
 export async function callLLM({
   system,
   messages,
   tools,
   maxTokens = 1024,
   model: modelOverride,
+  signal: externalSignal,
 }: LLMCallOptions): Promise<LLMResult> {
   const apiKey = process.env.DEEPSEEK_API_KEY ?? ''
   if (!apiKey) {
@@ -139,7 +163,7 @@ export async function callLLM({
       'Content-Type':  'application/json',
     },
     body:   JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
+    signal: mergeAbortSignals(AbortSignal.timeout(30_000), externalSignal),
   })
 
   // Validate content-type before parsing to get a clear error when the server

@@ -2,7 +2,7 @@
   "mcpServers": {
     "supabase-orderflow": {
       "type": "http",
-      "url": "https://mcp.supabase.com/mcp?project_ref=akvaswvkdqfguksinrwa&read_only=true"
+      "url": "https://mcp.supabase.com/mcp?project_ref=tjqfysbcmpqlwmzdvynr&read_only=true"
     }
   }
 }

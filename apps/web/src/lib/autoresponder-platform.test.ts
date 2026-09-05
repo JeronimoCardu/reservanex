@@ -86,8 +86,8 @@ describe('deriveAutoResponderStatus (17. estado derivado)', () => {
     expect(deriveAutoResponderStatus({ ...complete, has_device_token: false })).toBe('incomplete')
   })
 
-  it('missing macrodroid url → incomplete', () => {
-    expect(deriveAutoResponderStatus({ ...complete, has_macrodroid_url: false })).toBe('incomplete')
+  it('Fase 1B: missing macrodroid url → still ready — MacroDroid is legacy-only, no longer required', () => {
+    expect(deriveAutoResponderStatus({ ...complete, has_macrodroid_url: false })).toBe('ready')
   })
 
   it('invalid phone → incomplete', () => {
@@ -150,8 +150,10 @@ describe('validateMacroDroidWebhookUrl', () => {
     expect(validateMacroDroidWebhookUrl('not a url').valid).toBe(false)
   })
 
-  it('rejects an empty URL', () => {
-    expect(validateMacroDroidWebhookUrl('   ').valid).toBe(false)
+  it('Fase 1B: accepts an empty URL — optional/legacy, resolves to null (not an error)', () => {
+    const result = validateMacroDroidWebhookUrl('   ')
+    expect(result.valid).toBe(true)
+    if (result.valid) expect(result.url).toBeNull()
   })
 
   it('12. never echoes the input into its error message in a way that could leak it via logs/toasts beyond the field itself', () => {

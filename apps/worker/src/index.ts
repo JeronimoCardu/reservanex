@@ -8,6 +8,7 @@ config({ path: path.resolve(__dirname, '../../../.env.local') })
 import { startPoller } from './poller'
 import { startDispatcher } from './dispatcher'
 import { startMediaDispatcher } from './media-dispatcher'
+import { startInternalServer } from './internal-server'
 
 console.log('[worker] started — pid', process.pid)
 console.log('[worker] GROQ_API_KEY configured:', !!process.env.GROQ_API_KEY)
@@ -28,3 +29,13 @@ startMediaDispatcher().catch((err) => {
   console.error('[worker] fatal startup error (media dispatcher):', err)
   process.exit(1)
 })
+// Fase 1 (AutoResponder sin MacroDroid) — internal HTTP server for
+// synchronous AI processing, called by apps/web's public webhook so a reply
+// can be returned in the SAME HTTP response AutoResponder is waiting on.
+// See internal-server.ts. A failure here must not take down the poll loops.
+try {
+  startInternalServer()
+} catch (err) {
+  console.error('[worker] fatal startup error (internal server):', err)
+  process.exit(1)
+}

@@ -7,8 +7,25 @@ import {
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+// Fase 1 (AutoResponder sin MacroDroid) — this route now waits (synchronously)
+// on the worker's internal AI pipeline before responding, instead of
+// returning the instant it enqueues. Must exceed WORKER_SYNC_FETCH_TIMEOUT_MS
+// below with headroom. On Vercel this requires a plan whose function timeout
+// ceiling covers this value (Hobby currently caps at 60s) — verify against
+// the deployed plan if AUTORESPONDER_SYNC_TIMEOUT_MS is ever raised.
+export const maxDuration = 30
 
-const DEVICE_TOKEN_HEADER = 'x-reservanex-device-token'
+const DEVICE_TOKEN_HEADER      = 'x-reservanex-device-token'
+const INTERNAL_SECRET_HEADER   = 'x-worker-internal-secret'
+const INTERNAL_PROCESS_PATH    = '/internal/autoresponder/process'
+const DEFAULT_SYNC_TIMEOUT_MS  = 20_000
+// Fase 1 — the worker's own internal endpoint races processMessage() against
+// AUTORESPONDER_SYNC_TIMEOUT_MS and always responds by then. This fetch's
+// own timeout must be safely LARGER than that so we never give up on the
+// worker before it has even finished giving up on itself — a race between
+// the two timeouts would make an honest ok_timeout from the worker
+// indistinguishable from this route's own network-level failure.
+const FETCH_TIMEOUT_BUFFER_MS = 5_000
 
 // POST /api/webhooks/autoresponder
 //
@@ -19,14 +36,33 @@ const DEVICE_TOKEN_HEADER = 'x-reservanex-device-token'
 // Auth identifies the tenant/account by DEVICE TOKEN — never by the message
 // sender's phone/name (see apps/web/src/lib/autoresponder-webhook.ts).
 //
-// Always responds fast with {"replies":[]} once the event is queued (or
-// deliberately ignored — group, unresolved sender, package mismatch) — the
-// DeepSeek agent runs asynchronously in the worker via the existing
-// message_queue pipeline, exactly like Meta's webhook already does.
+// Fase 1 (AutoResponder sin MacroDroid): once the event is queued, this
+// route calls the worker's internal HTTP endpoint SYNCHRONOUSLY and waits
+// for the generated reply, returning {"replies":[{"message":"..."}]} (or
+// {"replies":[]} when there is deliberately no reply, or when processing
+// fails/times out — never a fabricated answer) in THIS same HTTP response.
+// AutoResponder's "Web Server" trigger publishes that reply directly to
+// WhatsApp — no messaging_outbox, no dispatcher, no MacroDroid for this
+// path. Group/unresolved-sender/package-mismatch messages are still
+// answered instantly with {"replies":[]} without ever reaching the worker.
 export async function POST(req: NextRequest) {
   try {
     const deviceTokenHeader = req.headers.get(DEVICE_TOKEN_HEADER)
     const rawBody = await req.text()
+
+    // ─────────────────────────────────────────────────────────────────────
+    // TEMPORARY DIAGNOSTIC (Fase 1B — 401 investigation). REMOVE once the
+    // 401 is resolved. Logs ONLY non-sensitive shape/identity signals:
+    // never the raw token, never a full hash, never any key.
+    // ─────────────────────────────────────────────────────────────────────
+    console.log('[webhook:autoresponder][DIAG] inbound', {
+      header_present:  Boolean(deviceTokenHeader),
+      header_length:   deviceTokenHeader?.length ?? 0,
+      header_has_quotes:      deviceTokenHeader ? /["']/.test(deviceTokenHeader) : false,
+      header_has_whitespace:  deviceTokenHeader ? /\s/.test(deviceTokenHeader) : false,
+      header_is_lowercase_hex: deviceTokenHeader ? /^[0-9a-f]+$/.test(deviceTokenHeader) : false,
+      supabase_ref:    (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').replace(/^https:\/\/([a-z0-9]{6}).*/, '$1…'),
+    })
 
     const admin = createAdminClient()
 
@@ -38,6 +74,14 @@ export async function POST(req: NextRequest) {
           .eq('provider', 'autoresponder')
           .eq('inbound_token_hash', tokenHash)
           .maybeSingle()
+
+        // TEMPORARY DIAGNOSTIC (see above) — hash PREFIX only, never full.
+        console.log('[webhook:autoresponder][DIAG] lookup', {
+          computed_hash_prefix: tokenHash.slice(0, 8),
+          lookup_result_count:  data ? 1 : 0,
+          lookup_error_code:    error?.code ?? null,
+          account_id:           data?.id ?? null,
+        })
 
         if (error) {
           console.error('[webhook:autoresponder] account lookup error', { code: error.code })
@@ -94,6 +138,57 @@ export async function POST(req: NextRequest) {
           .eq('id', accountId)
         if (error) {
           console.warn('[webhook:autoresponder] health update failed (non-fatal)', { code: error.code })
+        }
+      },
+
+      // Fase 1 (AutoResponder sin MacroDroid) — calls the worker's internal
+      // HTTP endpoint (apps/worker/src/internal-server.ts), which claims
+      // this exact message_queue row and runs the real AI pipeline
+      // (buildContext → generateAIReply → tools → DeepSeek → writeMemory —
+      // the SAME code the async poller uses for Meta, zero duplication).
+      // Never throws: every failure (missing config, network error,
+      // timeout, non-2xx, malformed body) resolves to null, which the pure
+      // handler above turns into a safe {replies:[]}.
+      async processSync({ queueItemId, tenantId, accountId }) {
+        const workerUrl = process.env.WORKER_INTERNAL_URL
+        const secret     = process.env.WORKER_INTERNAL_SECRET
+
+        if (!workerUrl || !secret) {
+          console.error('[webhook:autoresponder] WORKER_INTERNAL_URL/WORKER_INTERNAL_SECRET not configured — cannot process synchronously', {
+            tenantId, accountId,
+          })
+          return null
+        }
+
+        const budgetMs = Number(process.env.AUTORESPONDER_SYNC_TIMEOUT_MS ?? DEFAULT_SYNC_TIMEOUT_MS)
+        const fetchTimeoutMs = budgetMs + FETCH_TIMEOUT_BUFFER_MS
+
+        try {
+          const res = await fetch(`${workerUrl.replace(/\/$/, '')}${INTERNAL_PROCESS_PATH}`, {
+            method:  'POST',
+            headers: {
+              'content-type':           'application/json',
+              [INTERNAL_SECRET_HEADER]: secret,
+            },
+            body:   JSON.stringify({ queueItemId }),
+            signal: AbortSignal.timeout(fetchTimeoutMs),
+          })
+
+          if (!res.ok) {
+            console.error('[webhook:autoresponder] worker internal call returned non-OK status', { status: res.status, queueItemId })
+            return null
+          }
+
+          const data = (await res.json()) as { replyText?: unknown; outcome?: unknown }
+          console.log('[webhook:autoresponder] worker internal call completed', { queueItemId, outcome: data.outcome })
+          return { replyText: typeof data.replyText === 'string' ? data.replyText : null }
+        } catch (err) {
+          const isTimeout = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+          console.error('[webhook:autoresponder] worker internal call failed', {
+            queueItemId,
+            reason: isTimeout ? 'timeout' : (err instanceof Error ? err.message : String(err)),
+          })
+          return null
         }
       },
     }

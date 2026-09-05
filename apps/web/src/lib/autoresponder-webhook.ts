@@ -112,10 +112,34 @@ export interface AutoResponderWebhookDeps {
   // credentials, regardless of what the specific message contained.
   // Best-effort: implementations must not throw.
   markDeviceSeen(accountId: string): Promise<void>
+  // Fase 1 (AutoResponder sin MacroDroid) — synchronously runs the AI
+  // pipeline for the just-enqueued message_queue row and returns the
+  // generated reply text, so it can be returned in THIS webhook's HTTP
+  // response instead of going through messaging_outbox/MacroDroid. See
+  // apps/worker/src/internal-server.ts for what actually implements this
+  // (an internal HTTP call from the real route.ts implementation of this
+  // dependency).
+  //
+  // Contract: must NEVER throw — any failure to reach or complete the
+  // worker call must be caught and resolved as null, so the webhook always
+  // still responds safely with {replies: []} rather than propagating an
+  // error (see Fase 1 spec §10: never fabricate a reply on a technical
+  // failure). replyText null/empty means "no reply" (manual mode, deferred
+  // media, timeout, or error) — all equally safe to answer with silence.
+  processSync(params: {
+    queueItemId: string
+    tenantId:    string
+    accountId:   string
+  }): Promise<{ replyText: string | null } | null>
+}
+
+export interface AutoResponderReply {
+  message: string
 }
 
 export type WebhookOutcome =
-  | 'ok_enqueued'
+  | 'ok_replied'
+  | 'ok_silent'
   | 'ok_group_ignored'
   | 'ok_unresolved_sender'
   | 'ok_package_mismatch'
@@ -126,7 +150,7 @@ export type WebhookOutcome =
 
 export interface WebhookResult {
   httpStatus: number
-  body:       { replies: [] } | { error: string }
+  body:       { replies: AutoResponderReply[] } | { error: string }
   outcome:    WebhookOutcome
   logContext: Record<string, unknown>
 }
@@ -217,10 +241,24 @@ export async function handleAutoResponderWebhook(params: {
     return { httpStatus: 500, body: { error: 'Failed to enqueue message' }, outcome: 'rejected_enqueue_failed', logContext }
   }
 
+  // Fase 1 (AutoResponder sin MacroDroid) — process it inline, in the same
+  // request, and return the reply directly. deps.processSync's contract
+  // promises never to throw, but a webhook response must never depend on
+  // that being honored perfectly — defense in depth.
+  const syncResult = await deps
+    .processSync({ queueItemId: queued.id, tenantId: account.tenantId, accountId: account.id })
+    .catch((err: unknown) => {
+      console.error('[webhook:autoresponder] processSync threw unexpectedly', err instanceof Error ? err.message : String(err))
+      return null
+    })
+
+  const replyText = syncResult?.replyText?.trim() || null
+  const outcome: WebhookOutcome = replyText ? 'ok_replied' : 'ok_silent'
+
   return {
     httpStatus: 200,
-    body:       EMPTY_REPLIES,
-    outcome:    'ok_enqueued',
-    logContext: { ...logContext, queueItemId: queued.id, internalEventId },
+    body:       replyText ? { replies: [{ message: replyText }] } : EMPTY_REPLIES,
+    outcome,
+    logContext: { ...logContext, queueItemId: queued.id, internalEventId, replied: Boolean(replyText) },
   }
 }

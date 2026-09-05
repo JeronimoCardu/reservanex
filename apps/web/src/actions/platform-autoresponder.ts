@@ -24,7 +24,9 @@ import type { ActionResult } from '@/lib/action-result'
 export type CreateAutoResponderInput = {
   phone_number:            string
   device_name?:            string
-  macrodroid_webhook_url:  string
+  // Fase 1B (AutoResponder sin MacroDroid, definitivo) — optional, legacy-only.
+  // Not required for the active AutoResponder flow to function.
+  macrodroid_webhook_url?: string
   active:                  boolean
 }
 
@@ -101,7 +103,7 @@ export async function createAutoResponderAccountAction(
   const phoneResult = normalizeAndValidatePhone(input.phone_number)
   if (!phoneResult.valid) return { success: false, error: phoneResult.error }
 
-  const urlResult = validateMacroDroidWebhookUrl(input.macrodroid_webhook_url)
+  const urlResult = validateMacroDroidWebhookUrl(input.macrodroid_webhook_url ?? '')
   if (!urlResult.valid) return { success: false, error: urlResult.error }
 
   const admin = createAdminClient()

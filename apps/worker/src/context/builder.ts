@@ -56,6 +56,21 @@ export interface MessageContext {
   propertyTitle:      string | null
   propertySlug:       string | null
   leadContext:        LeadContext
+  // Fase 1B (AutoResponder sin MacroDroid, definitivo) — set ONLY by the
+  // synchronous internal endpoint (apps/worker/src/internal-server.ts) that
+  // backs POST /api/webhooks/autoresponder. When present and still within
+  // its deadline, deliverAIReply() (processor.ts) captures the AI reply
+  // here instead of ever touching messaging_outbox, so the text can be
+  // returned directly in the webhook's HTTP response — no MacroDroid
+  // involved. Left undefined for every other call path (the async poller,
+  // Meta, resumeAfterMediaReady, handleMediaNeverUploaded). For
+  // provider='autoresponder' this is now the ONLY delivery mechanism that
+  // exists: if this field is absent, or its deadline has already passed by
+  // the time deliverAIReply runs, the reply is generated but deliberately
+  // DROPPED — never enqueued to messaging_outbox, never persisted as a
+  // delivered message (see decideAutoResponderDelivery and deliverAIReply's
+  // doc comment). There is no fallback delivery path anymore.
+  syncReply?: { deadlineAtMs: number; captured: string | null }
 }
 
 // Detects a contact name from a customer message using simple regex patterns.

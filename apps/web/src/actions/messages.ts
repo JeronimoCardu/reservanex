@@ -475,46 +475,6 @@ interface MetaSendResponse {
   error?:    { message: string; code?: number }
 }
 
-// Enqueues a human reply into messaging_outbox for provider=autoresponder
-// conversations — apps/worker's dispatcher (polling, serialized per account,
-// see Fase 4 report §6/§8) picks it up and sends it via MacroDroid. Never
-// calls Meta. Mirrors apps/worker/src/outbox.ts's enqueueOutboxMessage — kept
-// as a separate small copy for the same reason as autoresponder-webhook.ts
-// (apps/web cannot import apps/worker code).
-async function enqueueAutoResponderOutbox(
-  admin: AdminClient,
-  params: {
-    tenantId:          string
-    accountId:         string
-    conversationId:    string
-    messageId:         string
-    destinationPhone:  string
-    text:              string
-    source:            'ai' | 'human'
-  },
-): Promise<boolean> {
-  const { error } = await admin
-    .from('messaging_outbox')
-    .insert({
-      tenant_id:         params.tenantId,
-      account_id:        params.accountId,
-      conversation_id:   params.conversationId,
-      message_id:        params.messageId,
-      destination_phone: params.destinationPhone,
-      text:              params.text,
-      provider:          'autoresponder',
-      source:            params.source,
-      status:            'pending',
-    })
-
-  if (error) {
-    console.error('[send-message] failed to enqueue outbox message', { code: error.code, conversationId: params.conversationId })
-    return false
-  }
-  console.log('[send-message] enqueued to outbox', { conversationId: params.conversationId, source: params.source })
-  return true
-}
-
 async function sendViaWhatsApp(
   admin:          AdminClient,
   tenantId:       string,
@@ -596,18 +556,21 @@ async function sendViaWhatsApp(
     return
   }
 
-  // provider=autoresponder: never call Meta — enqueue for the MacroDroid
-  // dispatcher instead. ai_mode/handoff were already updated by
-  // updateConversationMode() before this function runs, exactly like the
-  // Meta path — only the delivery mechanism differs.
+  // Fase 1B (AutoResponder sin MacroDroid, definitivo) — this CRM action can
+  // no longer deliver anything for provider=autoresponder: messaging_outbox/
+  // MacroDroid is retired from every active flow, and this action has no
+  // live synchronous AutoResponder webhook request to answer through (that
+  // only exists inside internal-server.ts, mid-request — see processor.ts's
+  // deliverAIReply). Human replies for this provider now happen directly in
+  // WhatsApp/WhatsApp Web, outside ReservaNex (see Fase 1B report §G) — fail
+  // predictably and visibly instead of silently doing nothing or reviving
+  // the retired outbox path. Meta is completely unaffected below.
   if (account.provider === 'autoresponder') {
-    const ok = await enqueueAutoResponderOutbox(admin, {
-      tenantId, accountId: account.id, conversationId, messageId,
-      destinationPhone: contact.phone, text, source: 'human',
-    })
-    if (!ok) {
-      await markDeliveryFailed(admin, tenantId, messageId, userId, 'Failed to enqueue for AutoResponder dispatch')
-    }
+    console.warn('[send-message] manual CRM send is not available for provider=autoresponder', { conversationId })
+    await markDeliveryFailed(
+      admin, tenantId, messageId, userId,
+      'Envío manual no disponible para AutoResponder — respondé directamente desde WhatsApp.',
+    )
     return
   }
 

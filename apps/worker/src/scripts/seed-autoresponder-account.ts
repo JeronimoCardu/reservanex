@@ -1,6 +1,6 @@
 /**
- * Dev script: registers or updates the AutoResponder (Android + MacroDroid)
- * channel account for a tenant. Idempotent — keyed on
+ * Dev script: registers or updates the AutoResponder (Android) channel
+ * account for a tenant. Idempotent — keyed on
  * (tenant_id, provider='autoresponder', phone_number).
  *
  * NEVER hardcodes secrets — everything comes from env vars, set locally in
@@ -8,11 +8,21 @@
  * webhook URL or the raw device token, before or after hashing — only an
  * account id, tenant id, last 4 phone digits, provider and active flag.
  *
+ * Fase 1B — AUTORESPONDER_MACRODROID_WEBHOOK_URL is now OPTIONAL. This
+ * version's active AutoResponder flow (inbound webhook → synchronous
+ * internal-server.ts → replies[]) never reads macrodroid_webhook_url — it
+ * is only consulted by the legacy messaging_outbox/dispatcher.ts path,
+ * which no longer participates in any active flow (see Fase 1B report §B).
+ * An account can be fully functional for this version with it left null.
+ *
  * Usage:  pnpm --filter @orderflow/worker seed:autoresponder
  * Env:    AUTORESPONDER_TENANT_ID              (required)
  *         AUTORESPONDER_PHONE_NUMBER            (required — WhatsApp Business
  *                                                number active on the Android)
- *         AUTORESPONDER_MACRODROID_WEBHOOK_URL  (required — SECRET)
+ *         AUTORESPONDER_MACRODROID_WEBHOOK_URL  (optional — legacy, SECRET.
+ *                                                Only needed for the retired
+ *                                                messaging_outbox/dispatcher
+ *                                                fallback, not for normal use)
  *         AUTORESPONDER_DEVICE_TOKEN            (required — SECRET, only its
  *                                                SHA-256 hash is ever stored)
  *         AUTORESPONDER_DEVICE_NAME             (optional — e.g. "Android Palermo #1")
@@ -46,8 +56,9 @@ async function main(): Promise<void> {
   const missing: string[] = []
   if (!tenantId)    missing.push('AUTORESPONDER_TENANT_ID')
   if (!rawPhone)     missing.push('AUTORESPONDER_PHONE_NUMBER')
-  if (!webhookUrl)   missing.push('AUTORESPONDER_MACRODROID_WEBHOOK_URL')
   if (!deviceToken)  missing.push('AUTORESPONDER_DEVICE_TOKEN')
+  // AUTORESPONDER_MACRODROID_WEBHOOK_URL is intentionally NOT required —
+  // see the file header. A missing value just leaves the column null.
 
   if (missing.length > 0) {
     console.error('\n  [seed-autoresponder] Missing required env vars:\n    ', missing.join('\n    '))
@@ -110,7 +121,9 @@ async function main(): Promise<void> {
     phone_number:            phoneNumber,
     device_name:             deviceName,
     inbound_token_hash:      tokenHash,
-    macrodroid_webhook_url:  webhookUrl,
+    // Legacy-only (see file header) — null is fine and expected for a
+    // MacroDroid-less setup; only set when explicitly provided.
+    macrodroid_webhook_url:  webhookUrl || null,
     active:                  true,
   }
 

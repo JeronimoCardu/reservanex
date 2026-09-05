@@ -9,8 +9,7 @@ import { sendWhatsAppReply } from './whatsapp/sender'
 import { downloadMetaMedia, uploadWhatsAppMediaToStorage } from './whatsapp/media'
 import { transcribeAudio } from './whatsapp/transcribe'
 import { executeEscalateToHuman } from './tools/escalate-to-human'
-import { enqueueOutboxMessage } from './outbox'
-import { createMediaEvent } from './media-events'
+import { decideAutoResponderDelivery } from './providers/autoresponder/delivery-decision'
 
 // Resolves which provider to dispatch THROUGH: the CONVERSATION's canonical
 // account's real provider column — NOT ctx.provider, which only reflects the
@@ -44,39 +43,50 @@ async function resolveDispatchProvider(ctx: MessageContext): Promise<'meta' | 'a
   return account.provider === 'autoresponder' ? 'autoresponder' : 'meta'
 }
 
-// Routes an AI reply's delivery by provider. provider='meta' is completely
-// unchanged (synchronous Graph API call, same as before this file existed —
-// see whatsapp/sender.ts, untouched — it already looks up the account by
-// ctx.whatsappAccountId on its own, so it automatically sends through the
-// conversation's canonical account). provider='autoresponder' cannot send
-// synchronously (MacroDroid dispatch is a separate, serialized, asynchronous
-// process — see apps/worker/src/dispatcher.ts and Fase 4 report §5/§8), so it
-// enqueues into messaging_outbox instead and returns immediately.
-async function dispatchOutboundReply(
-  ctx:         MessageContext,
-  text:        string,
-  aiMessageId: string,
-): Promise<string> {
+// Decides delivery AND persistence together for one AI reply — this is the
+// single point that enforces the Fase 1B hard rule: for provider='meta',
+// completely unchanged (synchronous Graph API call, see whatsapp/sender.ts,
+// untouched — it already looks up the account by ctx.whatsappAccountId on
+// its own). For provider='autoresponder', messaging_outbox/MacroDroid is NO
+// LONGER a delivery mechanism under ANY condition — not as an outbound
+// path, not as a fallback, not as a retry, not for a late/timed-out reply.
+// The ONLY way an AutoResponder reply reaches the customer is a live sync
+// HTTP call still within its deadline (ctx.syncReply — see
+// decideAutoResponderDelivery). If that isn't available, the reply is
+// generated but DROPPED: never enqueued anywhere, and — crucially — never
+// persisted via writeMemory() either, so a reply the customer never
+// received can never show up as "already sent" in the conversation history
+// DeepSeek reads on the next turn (see delivery-decision.ts's doc comment
+// and the Fase 1B report §E for the "ghost message" problem this avoids).
+async function deliverAIReply(
+  ctx:    MessageContext,
+  result: LLMResult,
+): Promise<{ aiMessageId: string | null; dispatch: string }> {
   const provider = await resolveDispatchProvider(ctx)
 
-  if (provider === 'autoresponder' && ctx.whatsappAccountId) {
-    const queued = await enqueueOutboxMessage({
-      tenantId:          ctx.tenantId,
-      accountId:         ctx.whatsappAccountId,
-      conversationId:    ctx.conversationId,
-      messageId:         aiMessageId,
-      destinationPhone:  ctx.contactPhone,
-      text,
-      source:            'ai',
-    })
-    return queued ? `outbox:${queued.id}` : 'outbox:failed'
+  if (provider === 'autoresponder') {
+    const syncReply = ctx.syncReply
+    const decision  = decideAutoResponderDelivery(syncReply, Date.now())
+
+    if (!decision.deliver || !syncReply) {
+      console.warn('[processor] AutoResponder reply generated but NOT delivered — MacroDroid/messaging_outbox is disabled for this version', {
+        conversationId: ctx.conversationId,
+        reason:         decision.deliver ? 'no_sync_context' : decision.reason,
+      })
+      return { aiMessageId: null, dispatch: `not_delivered:${decision.deliver ? 'no_sync_context' : decision.reason}` }
+    }
+
+    const { aiMessageId } = await writeMemory(ctx, result)
+    syncReply.captured = result.text
+    return { aiMessageId, dispatch: 'sync:captured' }
   }
 
-  const outboundWamid = await sendWhatsAppReply(ctx, text)
+  const { aiMessageId } = await writeMemory(ctx, result)
+  const outboundWamid = await sendWhatsAppReply(ctx, result.text)
   if (outboundWamid) {
     await updateAiMessageWamid(ctx.tenantId, aiMessageId, outboundWamid)
   }
-  return outboundWamid ?? 'not sent'
+  return { aiMessageId, dispatch: outboundWamid ?? 'not sent' }
 }
 
 // Fixed handoff message sent as the last AI response when the cycle limit is reached.
@@ -129,8 +139,7 @@ async function sendFixedAudioFallbackAndEscalate(
   }
 
   const fixedResult: LLMResult = { text, finishReason, model: 'system' }
-  const { aiMessageId } = await writeMemory(ctx, fixedResult)
-  await dispatchOutboundReply(ctx, text, aiMessageId)
+  await deliverAIReply(ctx, fixedResult)
 
   // Escalate to human: sets ai_mode='manual', needs_human_attention=true,
   // human_attention_requested_at=now(). Non-fatal — reply already sent.
@@ -150,6 +159,47 @@ async function handleAudioTranscriptionFailure(ctx: MessageContext): Promise<voi
   await sendFixedAudioFallbackAndEscalate(ctx, AUDIO_TRANSCRIPTION_FAILED_TEXT, 'audio_transcription_failed')
 }
 
+// Fase 1B — AutoResponder audio/image/document with no MacroDroid to fetch
+// real bytes: answer immediately and honestly instead of silently depending
+// on a mechanism this version doesn't have (see the doc comment at
+// processMessage's AutoResponder-media block). Never calls the LLM — same
+// "no inventar, respuesta determinística" rule as the audio-failure texts
+// above. Explicit per-type wording so the customer always knows exactly
+// what to do next (write it as text).
+const AUTORESPONDER_MEDIA_NOT_SUPPORTED_TEXT: Record<'audio' | 'image' | 'document', string> = {
+  audio:    'Por el momento no puedo procesar audios. ¿Podés escribirme el mensaje en texto?',
+  image:    'Por el momento no puedo procesar imágenes. ¿Podés contarme en texto qué necesitás?',
+  document: 'Por el momento no puedo procesar documentos. ¿Podés contarme en texto qué necesitás?',
+}
+
+async function respondMediaNotSupported(
+  ctx:       MessageContext,
+  mediaType: 'audio' | 'image' | 'document',
+): Promise<void> {
+  const supabase = createClient()
+  const { data: conv } = await supabase
+    .from('conversations')
+    .select('ai_mode')
+    .eq('id', ctx.conversationId)
+    .eq('tenant_id', ctx.tenantId)
+    .maybeSingle()
+
+  if (conv && conv.ai_mode !== 'autonomous') {
+    console.log('[processor:media] skipping fixed media-not-supported reply — manual mode', {
+      conversationId: ctx.conversationId, mediaType,
+    })
+    return
+  }
+
+  const text   = AUTORESPONDER_MEDIA_NOT_SUPPORTED_TEXT[mediaType]
+  const result: LLMResult = { text, finishReason: 'media_not_supported_without_macrodroid', model: 'system' }
+  const { aiMessageId, dispatch } = await deliverAIReply(ctx, result)
+
+  console.log('[processor:media] AutoResponder media not supported — fixed reply', {
+    conversationId: ctx.conversationId, mediaType, aiMessageId, dispatch,
+  })
+}
+
 // Dedupe guard → AI slot claim → generateAIReply → dispatch. Extracted from
 // processMessage() (Fase 6B) so the SAME critical path can be invoked either
 // synchronously (text, Meta media, AutoResponder image/document — all of
@@ -157,7 +207,7 @@ async function handleAudioTranscriptionFailure(ctx: MessageContext): Promise<voi
 // later, asynchronously, once AutoResponder audio's transcription completes
 // (see resumeAfterMediaReady below). Logic is unchanged from before the
 // extraction — only moved.
-async function runAIPipeline(ctx: MessageContext): Promise<void> {
+async function runAIPipeline(ctx: MessageContext, signal?: AbortSignal): Promise<void> {
   const supabase = createClient()
 
   // ── Dedupe guard ────────────────────────────────────────────────────────────
@@ -240,8 +290,7 @@ async function runAIPipeline(ctx: MessageContext): Promise<void> {
         model:        'system',
       }
 
-      const { aiMessageId } = await writeMemory(ctx, handoffResult)
-      const dispatchInfo    = await dispatchOutboundReply(ctx, AI_HANDOFF_MESSAGE, aiMessageId)
+      const { aiMessageId, dispatch: dispatchInfo } = await deliverAIReply(ctx, handoffResult)
 
       // Transition conversation to manual mode with full handoff metadata.
       await supabase
@@ -274,11 +323,10 @@ async function runAIPipeline(ctx: MessageContext): Promise<void> {
     })
   }
 
-  const result = await generateAIReply(ctx)
+  const result = await generateAIReply(ctx, { signal })
 
   if (result) {
-    const { aiMessageId } = await writeMemory(ctx, result)
-    const dispatchInfo    = await dispatchOutboundReply(ctx, result.text, aiMessageId)
+    const { aiMessageId, dispatch: dispatchInfo } = await deliverAIReply(ctx, result)
 
     console.log('[processor] done', {
       conversationId:           ctx.conversationId,
@@ -295,11 +343,48 @@ async function runAIPipeline(ctx: MessageContext): Promise<void> {
   }
 }
 
-export async function processMessage(queueItem: QueueRow): Promise<void> {
+// Fase 1B (AutoResponder sin MacroDroid, definitivo) — when syncOptions is
+// passed, processMessage runs exactly the same pipeline as the async
+// poller, but attaches ctx.syncReply so deliverAIReply() (above) captures
+// the generated text instead of ever touching messaging_outbox, and returns
+// that text to the caller — see internal-server.ts, the synchronous
+// endpoint that backs POST /api/webhooks/autoresponder. Every existing call
+// site (poller.ts, validate-autoresponder.ts, demo-flow.ts) omits the
+// second argument and keeps getting `void`/no reply text, unchanged.
+//
+// Also builds an AbortController tied to the SAME deadline, threaded down
+// into generateAIReply()/callLLM() — §8 of the Fase 1B spec: propagate the
+// timeout into the LLM pipeline where reasonably possible, rather than
+// relying solely on the outer race in internal-server.ts. Not every step
+// (tool DB calls between LLM turns) is abortable this way; deliverAIReply's
+// deadline check is the actual, unconditional guarantee that a late result
+// is never delivered/persisted/enqueued — the abort is purely a latency/
+// waste-reduction improvement on top of that guarantee, not a substitute.
+export interface ProcessMessageSyncOptions {
+  timeoutMs: number
+}
+export interface ProcessMessageSyncResult {
+  replyText: string | null
+}
+
+export async function processMessage(
+  queueItem:    QueueRow,
+  syncOptions?: ProcessMessageSyncOptions,
+): Promise<ProcessMessageSyncResult | void> {
   console.log('[processor] processing', queueItem.id)
 
   const ctx     = await buildContext(queueItem)
   const supabase = createClient()
+
+  let abortSignal: AbortSignal | undefined
+  if (syncOptions) {
+    ctx.syncReply = { deadlineAtMs: Date.now() + syncOptions.timeoutMs, captured: null }
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(new Error('autoresponder_sync_budget_exceeded')), syncOptions.timeoutMs)
+    abortSignal = controller.signal
+  }
+  const finish = (): ProcessMessageSyncResult | void =>
+    syncOptions ? { replyText: ctx.syncReply?.captured ?? null } : undefined
 
   // Track audio transcription outcome (set inside media block, consumed after dedupe)
   let audioTranscriptionStatus: 'completed' | 'failed' | 'skipped' | null = null
@@ -402,46 +487,23 @@ export async function processMessage(queueItem: QueueRow): Promise<void> {
     }
   }
 
-  // ── AutoResponder media (Fase 6B) ─────────────────────────────────────────────
-  // AutoResponder never gives bytes at webhook time — only a placeholder
-  // (see providers/autoresponder/media-parser.ts). buildContext() already
-  // created the customer message with a neutral placeholder as its content.
-  // Here we just register a pending media event so media-dispatcher.ts can
-  // trigger MacroDroid asynchronously.
-  //
-  // AUDIO defers the AI pipeline entirely (return below) until the real
-  // upload + transcription complete — resumeAfterMediaReady() picks up from
-  // there, mirroring Meta's own "wait for transcription" behavior above.
-  // IMAGE/DOCUMENT do NOT defer — exactly like Meta's existing image/document
-  // handling, which already answers immediately using its fixed placeholder
-  // text without waiting for any download to finish. The placeholder text
-  // plays the identical role for both providers.
-  if (ctx.provider === 'autoresponder' && ctx.mediaType && ctx.whatsappAccountId) {
-    const { data: existingEvent } = await supabase
-      .from('media_events')
-      .select('id')
-      .eq('message_id', ctx.messageId)
-      .maybeSingle()
-
-    if (!existingEvent) {
-      await createMediaEvent({
-        tenantId:         ctx.tenantId,
-        accountId:        ctx.whatsappAccountId,
-        conversationId:   ctx.conversationId,
-        messageId:        ctx.messageId,
-        mediaType:        ctx.mediaType,
-        expectedFilename: ctx.mediaFilename,
-      })
-    }
-
-    if (ctx.mediaType === 'audio') {
-      console.log('[processor] AutoResponder audio — AI deferred until transcription', {
-        conversationId: ctx.conversationId,
-        messageId:      ctx.messageId,
-      })
-      return
-    }
-    // image/document: fall through to the normal pipeline below.
+  // ── AutoResponder media (Fase 1B — sin MacroDroid) ────────────────────────────
+  // AutoResponder's "Web Server" trigger never gives real bytes at webhook
+  // time — only a placeholder (see providers/autoresponder/media-parser.ts).
+  // The ONLY mechanism this codebase ever had to fetch real bytes was the
+  // MacroDroid media-extraction trigger (media_events → media-dispatcher.ts
+  // → dispatchMediaTriggerToMacroDroid) — no longer part of any active flow
+  // in this version (see Fase 1B report §F). Creating a media_events row
+  // here would silently reintroduce that dependency. Instead: answer
+  // immediately and honestly, through the exact same delivery path as any
+  // other reply — no media_events, no deferring, no MacroDroid. The
+  // customer's inbound message itself is still persisted normally by
+  // buildContext() above (with its placeholder content) for CRM/audit
+  // visibility; only the real file extraction is the capability we don't
+  // have without MacroDroid.
+  if (ctx.provider === 'autoresponder' && ctx.mediaType) {
+    await respondMediaNotSupported(ctx, ctx.mediaType)
+    return finish()
   }
 
   // ── Meta audio: route based on transcription outcome ─────────────────────────
@@ -453,11 +515,36 @@ export async function processMessage(queueItem: QueueRow): Promise<void> {
       // Fall through to runAIPipeline below
     } else {
       await handleAudioTranscriptionFailure(ctx)
-      return
+      return finish()
     }
   }
 
-  await runAIPipeline(ctx)
+  try {
+    await runAIPipeline(ctx, abortSignal)
+  } catch (err) {
+    // Fase 1B — the sync budget's own AbortController (above) rejects
+    // callLLM mid-flight once the deadline passes. That is NOT a genuine
+    // processing failure — deliverAIReply would have refused to deliver
+    // this reply anyway (decideAutoResponderDelivery, deadline already
+    // exceeded). Left uncaught, this rejection would propagate out of
+    // processMessage() and internal-server.ts would call failQueueItem(),
+    // which resets status to 'pending' (attempts<3) — the async poller
+    // then picks it up and burns a SECOND real DeepSeek call for a reply
+    // that was always going to be dropped. Swallow it here instead: the
+    // queue item completes normally, exactly like any other "no reply"
+    // outcome (manual mode, etc.) — no retry, no wasted LLM call. A
+    // genuine unrelated error (not caused by our own abort) still
+    // propagates normally.
+    if (abortSignal?.aborted) {
+      console.warn('[processor] AI pipeline aborted — sync budget exceeded, no reply to deliver', {
+        conversationId: ctx.conversationId,
+        error:          err instanceof Error ? err.message : String(err),
+      })
+    } else {
+      throw err
+    }
+  }
+  return finish()
 }
 
 // Shared by resumeAfterMediaReady and handleMediaNeverUploaded (Fase 6B.1) —

@@ -110,7 +110,15 @@ function buildCurrentDateContext(): string {
   ].join('\n')
 }
 
-export async function generateAIReply(ctx: MessageContext): Promise<LLMResult | null> {
+export interface GenerateAIReplyOptions {
+  // Fase 1B (AutoResponder sin MacroDroid) — external cancellation for the
+  // sync webhook's own budget (see processor.ts/internal-server.ts),
+  // propagated into every callLLM() call in the turn loop below. Optional —
+  // every existing caller (async poller, Meta) keeps working unchanged.
+  signal?: AbortSignal
+}
+
+export async function generateAIReply(ctx: MessageContext, options?: GenerateAIReplyOptions): Promise<LLMResult | null> {
   const supabase = createClient()
 
   // 0. Check conversation mode — escalate_to_human sets ai_mode='manual'; skip AI response.
@@ -559,7 +567,11 @@ export async function generateAIReply(ctx: MessageContext): Promise<LLMResult | 
   let turnUsage: LLMUsage = { inputTokens: 0, outputTokens: 0 }
 
   for (let i = 0; i < maxTurns; i++) {
-    const result = await callLLM({ system: systemPrompt, messages, tools, model: settings?.model ?? undefined })
+    const result = await callLLM({
+      system: systemPrompt, messages, tools,
+      model:  settings?.model ?? undefined,
+      signal: options?.signal,
+    })
     turnUsage = addUsage(turnUsage, result.usage)
 
     // No tool calls → final text response
