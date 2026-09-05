@@ -50,20 +50,6 @@ export async function POST(req: NextRequest) {
     const deviceTokenHeader = req.headers.get(DEVICE_TOKEN_HEADER)
     const rawBody = await req.text()
 
-    // ─────────────────────────────────────────────────────────────────────
-    // TEMPORARY DIAGNOSTIC (Fase 1B — 401 investigation). REMOVE once the
-    // 401 is resolved. Logs ONLY non-sensitive shape/identity signals:
-    // never the raw token, never a full hash, never any key.
-    // ─────────────────────────────────────────────────────────────────────
-    console.log('[webhook:autoresponder][DIAG] inbound', {
-      header_present:  Boolean(deviceTokenHeader),
-      header_length:   deviceTokenHeader?.length ?? 0,
-      header_has_quotes:      deviceTokenHeader ? /["']/.test(deviceTokenHeader) : false,
-      header_has_whitespace:  deviceTokenHeader ? /\s/.test(deviceTokenHeader) : false,
-      header_is_lowercase_hex: deviceTokenHeader ? /^[0-9a-f]+$/.test(deviceTokenHeader) : false,
-      supabase_ref:    (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').replace(/^https:\/\/([a-z0-9]{6}).*/, '$1…'),
-    })
-
     const admin = createAdminClient()
 
     const deps: AutoResponderWebhookDeps = {
@@ -74,14 +60,6 @@ export async function POST(req: NextRequest) {
           .eq('provider', 'autoresponder')
           .eq('inbound_token_hash', tokenHash)
           .maybeSingle()
-
-        // TEMPORARY DIAGNOSTIC (see above) — hash PREFIX only, never full.
-        console.log('[webhook:autoresponder][DIAG] lookup', {
-          computed_hash_prefix: tokenHash.slice(0, 8),
-          lookup_result_count:  data ? 1 : 0,
-          lookup_error_code:    error?.code ?? null,
-          account_id:           data?.id ?? null,
-        })
 
         if (error) {
           console.error('[webhook:autoresponder] account lookup error', { code: error.code })

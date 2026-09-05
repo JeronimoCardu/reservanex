@@ -45,17 +45,13 @@ export function getAutoResponderPublicBaseUrl(): string {
 
 export interface AutoResponderEndpoints {
   inbound:     string
-  media:       string
   heartbeat:   string
-  outboundAck: string
 }
 
 export function getAutoResponderEndpoints(): AutoResponderEndpoints {
   const base = getAutoResponderPublicBaseUrl()
   return {
     inbound:     `${base}/api/webhooks/autoresponder`,
-    media:       `${base}/api/webhooks/autoresponder/media`,
     heartbeat:   `${base}/api/webhooks/autoresponder/heartbeat`,
-    outboundAck: `${base}/api/webhooks/autoresponder/outbound-ack`,
   }
 }

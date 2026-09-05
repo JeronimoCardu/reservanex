@@ -31,7 +31,6 @@ import { createClient as createSupabaseJsClient } from '@supabase/supabase-js'
 import type { Database } from '@orderflow/types'
 import { createAdminClient } from '@orderflow/supabase/admin'
 import { assertSafeSupabaseTarget } from './assert-safe-target'
-import { validateMacroDroidWebhookUrl } from '../src/lib/autoresponder-platform'
 
 const HR   = '─'.repeat(78)
 const PASS = '  ✓'
@@ -113,7 +112,7 @@ async function main(): Promise<void> {
     const { data: account, error: aErr } = await admin.from('whatsapp_accounts').insert({
       tenant_id: tenant.id, provider: 'autoresponder',
       phone_number: '549' + String(phoneBase + Math.floor(Math.random() * 999_999)).padStart(10, '0'),
-      inbound_token_hash: randomBytes(32).toString('hex'), macrodroid_webhook_url: 'https://trigger.macrodroid.com/security-test', active: true,
+      inbound_token_hash: randomBytes(32).toString('hex'), active: true,
     }).select('id').single()
     if (aErr || !account) throw new Error(`whatsapp_accounts insert failed: ${aErr?.message}`)
 
@@ -393,16 +392,6 @@ async function main(): Promise<void> {
       }
     }
 
-    // ═══ MacroDroid URL SSRF hardening — code-level, no DB dependency ══════
-    {
-      const evil = validateMacroDroidWebhookUrl('https://169.254.169.254/latest/meta-data/')
-      const legit = validateMacroDroidWebhookUrl('https://trigger.macrodroid.com/abc/reservanex')
-      if (!evil.valid && legit.valid) {
-        ok('MacroDroid webhook URL: non-trigger.macrodroid.com hosts (incl. cloud metadata IPs) rejected; the real host accepted')
-      } else {
-        nok('MacroDroid webhook URL SSRF hardening', `evil.valid=${evil.valid} legit.valid=${legit.valid}`)
-      }
-    }
 
   } finally {
     // Cleanup — service role, own fixtures only. audit_logs is populated by a

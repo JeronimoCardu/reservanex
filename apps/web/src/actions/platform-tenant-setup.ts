@@ -29,7 +29,6 @@ export async function getTenantSetupChecklistAction(
           phone_number:       signals.whatsapp.phone_number,
           active:              signals.whatsapp.active,
           has_device_token:    signals.whatsapp.has_device_token,
-          has_macrodroid_url:  signals.whatsapp.has_macrodroid_url,
         }
       : null,
   )

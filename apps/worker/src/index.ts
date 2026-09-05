@@ -6,33 +6,30 @@ import { config } from 'dotenv'
 config({ path: path.resolve(__dirname, '../../../.env.local') })
 
 import { startPoller } from './poller'
-import { startDispatcher } from './dispatcher'
-import { startMediaDispatcher } from './media-dispatcher'
 import { startInternalServer } from './internal-server'
 
+// Fase 2A (AUTORESPONDER-ONLY) — this worker runs exactly two components.
+// The former outbound dispatcher and media dispatcher (both MacroDroid
+// transports) were deleted: AutoResponder replies are delivered
+// synchronously in the webhook's own HTTP response (internal-server.ts →
+// processor.ts's deliverAIReply), and AutoResponder media is answered with
+// a fixed "send it as text" reply instead of being extracted off the
+// device. Meta is unaffected — it never used either dispatcher; its
+// outbound send is a direct Graph API call inside the pipeline.
 console.log('[worker] started — pid', process.pid)
 console.log('[worker] GROQ_API_KEY configured:', !!process.env.GROQ_API_KEY)
+
+// Inbound message_queue poll loop. Still needed: it is the crash-recovery
+// path for queue rows the synchronous endpoint could not finish (and the
+// only processing path for provider=meta).
 startPoller().catch((err) => {
   console.error('[worker] fatal startup error (poller):', err)
   process.exit(1)
 })
-// Independent poll loop for outbound AutoResponder/MacroDroid dispatch — see
-// dispatcher.ts. A failure here must not take down inbound processing.
-startDispatcher().catch((err) => {
-  console.error('[worker] fatal startup error (dispatcher):', err)
-  process.exit(1)
-})
-// Independent poll loop for AutoResponder media (audio/image/document)
-// extraction triggers — see media-dispatcher.ts (Fase 6B). A failure here
-// must not take down inbound processing or outbound text dispatch.
-startMediaDispatcher().catch((err) => {
-  console.error('[worker] fatal startup error (media dispatcher):', err)
-  process.exit(1)
-})
-// Fase 1 (AutoResponder sin MacroDroid) — internal HTTP server for
-// synchronous AI processing, called by apps/web's public webhook so a reply
-// can be returned in the SAME HTTP response AutoResponder is waiting on.
-// See internal-server.ts. A failure here must not take down the poll loops.
+
+// Internal HTTP server for synchronous AI processing, called by apps/web's
+// public webhook so a reply can be returned in the SAME HTTP response
+// AutoResponder is waiting on. See internal-server.ts.
 try {
   startInternalServer()
 } catch (err) {

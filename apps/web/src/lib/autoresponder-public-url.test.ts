@@ -49,9 +49,7 @@ describe('getAutoResponderEndpoints', () => {
     process.env.AUTORESPONDER_PUBLIC_BASE_URL = 'https://reservanex.com'
     expect(getAutoResponderEndpoints()).toEqual({
       inbound:     'https://reservanex.com/api/webhooks/autoresponder',
-      media:       'https://reservanex.com/api/webhooks/autoresponder/media',
       heartbeat:   'https://reservanex.com/api/webhooks/autoresponder/heartbeat',
-      outboundAck: 'https://reservanex.com/api/webhooks/autoresponder/outbound-ack',
     })
   })
 

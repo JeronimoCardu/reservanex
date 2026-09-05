@@ -653,7 +653,6 @@ export async function getTenantSetupSignals(tenantId: string): Promise<{
     phone_number:       string
     active:              boolean
     has_device_token:    boolean
-    has_macrodroid_url:  boolean
   } | null
   lastDeviceSeenAt:       string | null
   publishedPropertyCount: number
@@ -665,7 +664,7 @@ export async function getTenantSetupSignals(tenantId: string): Promise<{
     admin.from('ai_settings').select('id').eq('tenant_id', tenantId).maybeSingle(),
     admin
       .from('whatsapp_accounts')
-      .select('phone_number, active, inbound_token_hash, macrodroid_webhook_url, last_device_seen_at')
+      .select('phone_number, active, inbound_token_hash, last_device_seen_at')
       .eq('tenant_id', tenantId)
       .eq('provider', 'autoresponder')
       .order('updated_at', { ascending: false })
@@ -684,7 +683,6 @@ export async function getTenantSetupSignals(tenantId: string): Promise<{
           phone_number:      whatsappRow.phone_number,
           active:             whatsappRow.active,
           has_device_token:   Boolean(whatsappRow.inbound_token_hash),
-          has_macrodroid_url: Boolean(whatsappRow.macrodroid_webhook_url),
         }
       : null,
     lastDeviceSeenAt:       whatsappRow?.last_device_seen_at ?? null,

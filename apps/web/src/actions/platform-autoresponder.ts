@@ -7,7 +7,6 @@ import { hashDeviceToken } from '@/lib/autoresponder-webhook'
 import {
   generateDeviceToken,
   normalizeAndValidatePhone,
-  validateMacroDroidWebhookUrl,
   sanitizeAutoResponderRow,
 } from '@/lib/autoresponder-platform'
 import type { AutoResponderPlatformData } from '@/lib/autoresponder-platform'
@@ -24,17 +23,14 @@ import type { ActionResult } from '@/lib/action-result'
 export type CreateAutoResponderInput = {
   phone_number:            string
   device_name?:            string
-  // Fase 1B (AutoResponder sin MacroDroid, definitivo) — optional, legacy-only.
-  // Not required for the active AutoResponder flow to function.
-  macrodroid_webhook_url?: string
   active:                  boolean
 }
 
 // ── A) Get AutoResponder settings for a tenant (SA only) ─────────────────────
-// Never returns inbound_token_hash or macrodroid_webhook_url — only booleans
-// derived from their presence. Both ARE selected from the DB here (needed to
-// compute those booleans) but sanitizeAutoResponderRow()'s return type makes
-// it structurally impossible to forward them further.
+// Never returns inbound_token_hash — only a boolean derived from its
+// presence. It IS selected from the DB here (needed to compute that boolean)
+// but sanitizeAutoResponderRow()'s return type makes it structurally
+// impossible to forward it further.
 export async function getTenantAutoResponderSettingsForPlatformAction(
   tenantId: string,
 ): Promise<ActionResult<AutoResponderPlatformData | null>> {
@@ -58,7 +54,7 @@ export async function getTenantAutoResponderSettingsForPlatformAction(
   // of silently falling back to "Sin configurar".
   const { data, error } = await admin
     .from('whatsapp_accounts')
-    .select('id, tenant_id, phone_number, device_name, active, inbound_token_hash, macrodroid_webhook_url, created_at, updated_at, last_device_seen_at, last_inbound_at, last_outbound_dispatch_at, last_media_upload_at, last_outbound_device_ack_at')
+    .select('id, tenant_id, phone_number, device_name, active, inbound_token_hash, created_at, updated_at, last_device_seen_at, last_inbound_at')
     .eq('tenant_id', tenantId)
     .eq('provider', 'autoresponder')
     .order('updated_at', { ascending: false })
@@ -77,14 +73,10 @@ export async function getTenantAutoResponderSettingsForPlatformAction(
       device_name:                data.device_name,
       active:                     data.active,
       has_device_token:           Boolean(data.inbound_token_hash),
-      has_macrodroid_url:         Boolean(data.macrodroid_webhook_url),
       created_at:                 data.created_at,
       updated_at:                 data.updated_at,
       last_device_seen_at:        data.last_device_seen_at,
       last_inbound_at:            data.last_inbound_at,
-      last_outbound_dispatch_at:  data.last_outbound_dispatch_at,
-      last_media_upload_at:       data.last_media_upload_at,
-      last_outbound_device_ack_at: data.last_outbound_device_ack_at,
     }),
   }
 }
@@ -102,9 +94,6 @@ export async function createAutoResponderAccountAction(
 
   const phoneResult = normalizeAndValidatePhone(input.phone_number)
   if (!phoneResult.valid) return { success: false, error: phoneResult.error }
-
-  const urlResult = validateMacroDroidWebhookUrl(input.macrodroid_webhook_url ?? '')
-  if (!urlResult.valid) return { success: false, error: urlResult.error }
 
   const admin = createAdminClient()
 
@@ -131,7 +120,7 @@ export async function createAutoResponderAccountAction(
   if (existing) {
     return {
       success: false,
-      error: 'Ya existe una cuenta AutoResponder para este tenant. Usá Editar, Rotar token o Reemplazar webhook.',
+      error: 'Ya existe una cuenta AutoResponder para este tenant. Usá Editar o Rotar token.',
     }
   }
 
@@ -146,7 +135,6 @@ export async function createAutoResponderAccountAction(
       phone_number:            phoneResult.phone,
       device_name:             input.device_name?.trim() || null,
       inbound_token_hash:      tokenHash,
-      macrodroid_webhook_url:  urlResult.url,
       active:                  input.active,
     })
     .select('id')
@@ -242,39 +230,8 @@ export async function rotateAutoResponderDeviceTokenAction(
   return { success: true, data: { raw_device_token: rawToken } }
 }
 
-// ── E) Replace the MacroDroid webhook URL (SA only) ───────────────────────────
-// Only ever overwrites — there is deliberately no action anywhere that reads
-// this column back out to the browser (see getTenantAutoResponderSettings...
-// above, which never selects it into the response).
-export async function replaceAutoResponderWebhookUrlAction(
-  accountId: string,
-  tenantId:  string,
-  input:     { macrodroid_webhook_url: string },
-): Promise<ActionResult> {
-  await requireSuperAdmin()
-
-  const urlResult = validateMacroDroidWebhookUrl(input.macrodroid_webhook_url)
-  if (!urlResult.valid) return { success: false, error: urlResult.error }
-
-  const admin = createAdminClient()
-
-  const { data, error } = await admin
-    .from('whatsapp_accounts')
-    .update({ macrodroid_webhook_url: urlResult.url })
-    .eq('id', accountId)
-    .eq('tenant_id', tenantId)
-    .eq('provider', 'autoresponder')
-    .select('id')
-
-  if (error) return { success: false, error: error.message }
-  if (!data || data.length === 0) {
-    return { success: false, error: 'Cuenta no encontrada para este tenant.' }
-  }
-
-  revalidatePath(`/platform/tenants/${tenantId}/whatsapp`)
-  revalidatePath(`/platform/tenants/${tenantId}`)
-  return { success: true }
-}
+// ── E) (removed in Fase 2A) The MacroDroid webhook URL action lived here.
+//    macrodroid_webhook_url is no longer settable from anywhere.
 
 // ── F) Activate / deactivate (SA only) ────────────────────────────────────────
 export async function setAutoResponderActiveAction(

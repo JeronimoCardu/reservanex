@@ -136,8 +136,11 @@ async function main(): Promise<void> {
     const signals = await platformRepo.getTenantSetupSignals(tenantId)
     const whatsappStatus = deriveAutoResponderStatus(
       signals.whatsapp
-        ? { phone_number: signals.whatsapp.phone_number, active: signals.whatsapp.active,
-            has_device_token: signals.whatsapp.has_device_token, has_macrodroid_url: signals.whatsapp.has_macrodroid_url }
+        ? {
+            phone_number:     signals.whatsapp.phone_number,
+            active:           signals.whatsapp.active,
+            has_device_token: signals.whatsapp.has_device_token,
+          }
         : null,
     )
     const deviceStatus = deriveDeviceStatus({ configStatus: whatsappStatus, lastDeviceSeenAt: signals.lastDeviceSeenAt })

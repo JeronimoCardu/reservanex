@@ -98,26 +98,16 @@ const AI_HANDOFF_MESSAGE =
 const AUDIO_TRANSCRIPTION_FAILED_TEXT =
   'Recibí tu audio, pero no pude transcribirlo automáticamente. Un asesor lo va a revisar.'
 
-// Fase 6B.1 — distinct from the above: here no bytes ever arrived at all
-// (MacroDroid never uploaded), so we never even claim to have "received" the
-// audio. Must not mention IA/Meta/WhatsApp/limits/costs/plan — same
-// constraint as AI_HANDOFF_MESSAGE above.
-const AUDIO_NEVER_UPLOADED_TEXT =
-  'No pudimos recibir tu audio. Un asesor te va a escribir para ayudarte con lo que necesites.'
-
 type QueueRow = Database['public']['Tables']['message_queue']['Row']
 
-// Sends the fixed "couldn't transcribe" apology and escalates to a human —
-// shared by Meta's synchronous audio path and AutoResponder's deferred one
-// (Fase 6B's resumeAfterMediaReady). Never calls the LLM: the apology text is
-// deterministic, matching the existing "no inventar contenido" rule for a
-// failed transcription.
+// Sends the fixed "couldn't transcribe" apology and escalates to a human.
+// Never calls the LLM: the apology text is deterministic, matching the
+// existing "no inventar contenido" rule for a failed transcription.
 //
-// Fase 6B.1: generalized into sendFixedAudioFallbackAndEscalate so the SAME
-// mechanism (fixed message + escalate) also covers "audio never uploaded at
-// all" (handleMediaNeverUploaded, below) — a distinct failure mode found
-// during Fase 6B.1's audit that previously left the customer with pure
-// silence. Not a new strategy: same primitives, a second honest wording.
+// Fase 2A: now reached ONLY from Meta's audio path
+// (handleAudioTranscriptionFailure below). Its former second caller —
+// AutoResponder's "audio never uploaded by MacroDroid" recovery — was
+// deleted along with that transport.
 async function sendFixedAudioFallbackAndEscalate(
   ctx:          MessageContext,
   text:         string,
@@ -192,7 +182,7 @@ async function respondMediaNotSupported(
   }
 
   const text   = AUTORESPONDER_MEDIA_NOT_SUPPORTED_TEXT[mediaType]
-  const result: LLMResult = { text, finishReason: 'media_not_supported_without_macrodroid', model: 'system' }
+  const result: LLMResult = { text, finishReason: 'media_not_supported', model: 'system' }
   const { aiMessageId, dispatch } = await deliverAIReply(ctx, result)
 
   console.log('[processor:media] AutoResponder media not supported — fixed reply', {
@@ -200,13 +190,11 @@ async function respondMediaNotSupported(
   })
 }
 
-// Dedupe guard → AI slot claim → generateAIReply → dispatch. Extracted from
-// processMessage() (Fase 6B) so the SAME critical path can be invoked either
-// synchronously (text, Meta media, AutoResponder image/document — all of
-// which already have their final ctx.messageText available immediately) or
-// later, asynchronously, once AutoResponder audio's transcription completes
-// (see resumeAfterMediaReady below). Logic is unchanged from before the
-// extraction — only moved.
+// Dedupe guard → AI slot claim → generateAIReply → dispatch. Every caller
+// now reaches this synchronously, with ctx.messageText already final (text
+// for AutoResponder, text or a transcribed/placeholder body for Meta) —
+// Fase 2A removed the one asynchronous caller (AutoResponder audio resumed
+// after a MacroDroid upload).
 async function runAIPipeline(ctx: MessageContext, signal?: AbortSignal): Promise<void> {
   const supabase = createClient()
 
@@ -217,9 +205,7 @@ async function runAIPipeline(ctx: MessageContext, signal?: AbortSignal): Promise
   //   2. message_queue has a duplicate row for the same payload
   // The DB-level unique index (messages_one_ai_reply_per_inbound_idx) is the
   // authoritative guard; this application-level check avoids an unnecessary
-  // LLM call when the duplicate is detected early. For AutoResponder audio
-  // (Fase 6B) it ALSO doubles as idempotency against the upload endpoint
-  // being hit twice for the same event — see resumeAfterMediaReady.
+  // LLM call when the duplicate is detected early.
   const { data: existingReply } = await supabase
     .from('messages')
     .select('id')
@@ -492,7 +478,7 @@ export async function processMessage(
   // time — only a placeholder (see providers/autoresponder/media-parser.ts).
   // The ONLY mechanism this codebase ever had to fetch real bytes was the
   // MacroDroid media-extraction trigger (media_events → media-dispatcher.ts
-  // → dispatchMediaTriggerToMacroDroid) — no longer part of any active flow
+  // → the deleted media trigger) — no longer part of any active flow
   // in this version (see Fase 1B report §F). Creating a media_events row
   // here would silently reintroduce that dependency. Instead: answer
   // immediately and honestly, through the exact same delivery path as any
@@ -547,251 +533,14 @@ export async function processMessage(
   return finish()
 }
 
-// Shared by resumeAfterMediaReady and handleMediaNeverUploaded (Fase 6B.1) —
-// both need to reconstruct enough of a MessageContext from an EXISTING
-// message/conversation to resume/fall back the AI pipeline, without a fresh
-// inbound payload to parse. Extracted so the DB lookups (conversation,
-// contact, property) live in exactly one place.
-async function resolveConversationContext(
-  supabase:       ReturnType<typeof createClient>,
-  conversationId: string,
-): Promise<{
-  conversation:  { id: string; contact_id: string; property_id: string | null; whatsapp_account_id: string | null; lead_context: unknown }
-  contactId:     string
-  contactPhone:  string
-  contactName:   string | null
-  propertyTitle: string | null
-  propertySlug:  string | null
-} | null> {
-  const { data: conversation } = await supabase
-    .from('conversations')
-    .select('id, contact_id, lead_context, property_id, whatsapp_account_id')
-    .eq('id', conversationId)
-    .maybeSingle()
-
-  if (!conversation) return null
-
-  const { data: contact } = await supabase
-    .from('contacts')
-    .select('id, phone, name')
-    .eq('id', conversation.contact_id)
-    .maybeSingle()
-
-  let propertyTitle: string | null = null
-  let propertySlug:  string | null = null
-  if (conversation.property_id) {
-    const { data: property } = await supabase
-      .from('properties')
-      .select('title, slug')
-      .eq('id', conversation.property_id)
-      .maybeSingle()
-    propertyTitle = property?.title ?? null
-    propertySlug  = property?.slug  ?? null
-  }
-
-  return {
-    conversation,
-    contactId:    contact?.id    ?? conversation.contact_id,
-    contactPhone: contact?.phone ?? '',
-    contactName:  contact?.name  ?? null,
-    propertyTitle,
-    propertySlug,
-  }
-}
-
-// ── Fase 6B: resume the AI pipeline for AutoResponder audio once its real
-//    upload has arrived ──────────────────────────────────────────────────────
-// Called from media-dispatcher.ts's poll tick for media_events rows with
-// status='uploaded' AND media_type='audio' (image/document never reach
-// 'uploaded' via this path — the upload endpoint marks them 'ready' directly
-// since their AI reply was already sent synchronously in processMessage()).
-//
-// Idempotent: atomically claims the event (uploaded → processing) before
-// doing any work, so a duplicate/retried call for the same event_id is a
-// harmless no-op (Fase 6B report §15) — separate from, and in addition to,
-// runAIPipeline's own dedupe-by-whatsappMessageId guard below.
-export async function resumeAfterMediaReady(mediaEventId: string): Promise<void> {
-  const supabase = createClient()
-
-  const { data: claimed } = await supabase
-    .from('media_events')
-    .update({ status: 'processing', updated_at: new Date().toISOString() })
-    .eq('id', mediaEventId)
-    .eq('status', 'uploaded')
-    .eq('media_type', 'audio')
-    .select('*')
-    .maybeSingle()
-
-  if (!claimed) {
-    // Already claimed by a concurrent/duplicate call, already terminal, or
-    // not an audio event — nothing to do.
-    return
-  }
-
-  const { data: message } = await supabase
-    .from('messages')
-    .select('id, tenant_id, conversation_id, metadata, media_storage_path, whatsapp_message_id')
-    .eq('id', claimed.message_id)
-    .maybeSingle()
-
-  if (!message || !message.media_storage_path) {
-    await supabase
-      .from('media_events')
-      .update({ status: 'failed', error: 'message_or_storage_path_missing', updated_at: new Date().toISOString() })
-      .eq('id', mediaEventId)
-    console.error('[processor:media] resumeAfterMediaReady: message or storage path missing', { eventId: mediaEventId })
-    return
-  }
-
-  const resolved = await resolveConversationContext(supabase, claimed.conversation_id)
-  if (!resolved) {
-    await supabase
-      .from('media_events')
-      .update({ status: 'failed', error: 'conversation_missing', updated_at: new Date().toISOString() })
-      .eq('id', mediaEventId)
-    console.error('[processor:media] resumeAfterMediaReady: conversation missing', { eventId: mediaEventId })
-    return
-  }
-  const { conversation, contactId, contactPhone, contactName, propertyTitle, propertySlug } = resolved
-
-  const { data: fileBlob, error: downloadErr } = await supabase.storage
-    .from('whatsapp-media')
-    .download(message.media_storage_path)
-
-  const meta      = (message.metadata as Record<string, unknown> | null) ?? {}
-  const mimeType  = typeof meta['mime_type'] === 'string' ? meta['mime_type'] : 'audio/ogg'
-
-  let txResult: Awaited<ReturnType<typeof transcribeAudio>>
-  if (downloadErr || !fileBlob) {
-    console.error('[processor:media] failed to download stored audio for transcription', {
-      eventId: mediaEventId, error: downloadErr?.message,
-    })
-    txResult = { status: 'failed', error: 'storage_download_failed' }
-  } else {
-    const buffer = Buffer.from(await fileBlob.arrayBuffer())
-    txResult = await transcribeAudio(buffer, mimeType, `autoresponder_${message.id}`)
-  }
-
-  const updatedMeta: Record<string, unknown> = { ...meta, transcription_status: txResult.status }
-  let newContent: string
-  if (txResult.status === 'completed') {
-    newContent = txResult.text
-    updatedMeta['transcription_text'] = txResult.text
-  } else {
-    newContent = '[Audio recibido. No se pudo transcribir automáticamente. El equipo puede escucharlo en el CRM.]'
-  }
-
-  await supabase
-    .from('messages')
-    .update({ content: newContent, metadata: updatedMeta as never })
-    .eq('id', message.id)
-    .eq('tenant_id', message.tenant_id)
-
-  // Terminal 'ready' regardless of transcription outcome — the audio file
-  // itself is safely stored and playable either way (Fase 6B report §10/§15).
-  await supabase
-    .from('media_events')
-    .update({ status: 'ready', updated_at: new Date().toISOString() })
-    .eq('id', mediaEventId)
-
-  console.log('[processor:media] AutoResponder audio transcription resolved', {
-    eventId: mediaEventId, messageId: message.id, status: txResult.status,
-  })
-
-  const ctx: MessageContext = {
-    tenantId:             message.tenant_id,
-    conversationId:       conversation.id,
-    contactId,
-    contactPhone,
-    contactName,
-    messageText:          newContent,
-    whatsappMessageId:    message.whatsapp_message_id ?? mediaEventId,
-    whatsappAccountId:    conversation.whatsapp_account_id,
-    provider:             'autoresponder',
-    messageId:            message.id,
-    mediaType:            'audio',
-    mediaId:              null,
-    mediaMimeType:        mimeType,
-    mediaFilename:        null,
-    mediaCaption:         null,
-    mediaSha256:          null,
-    mediaDurationSeconds: null,
-    mediaPages:           null,
-    propertyId:           conversation.property_id,
-    propertyTitle,
-    propertySlug,
-    // Known, documented limitation (Fase 6B report §12/riesgos): lead-context
-    // extraction (property Ref / date parsing) does NOT re-run against the
-    // transcription text — only against typed messages, via builder.ts, at
-    // inbound time. The transcription still reaches DeepSeek as full semantic
-    // content; only the deterministic Ref/date regex pass is skipped here.
-    leadContext: (conversation.lead_context as LeadContext | null) ?? {},
-  }
-
-  if (txResult.status === 'completed') {
-    await runAIPipeline(ctx)
-  } else {
-    await handleAudioTranscriptionFailure(ctx)
-  }
-}
-
-// ── Fase 6B.1: audio that was dispatched to MacroDroid but NEVER received an
-//    upload (Android offline, app killed, no matching file, etc.) ───────────
-// Found during Fase 6B.1's audit: before this, a stuck-and-recovered audio
-// event (media-dispatcher.ts's recoverStuckMediaEvents, marks it 'failed'
-// after ~5 minutes) left the customer with pure silence — no automated
-// reply at all, unlike a received-but-untranscribable audio (which already
-// got handleAudioTranscriptionFailure's apology). Called from
-// recoverStuckMediaEvents for stuck AUDIO events specifically — image/
-// document already sent their AI reply immediately when the placeholder
-// first arrived (see processMessage), so they have no equivalent silence gap
-// to close; only their real file may end up missing from the CRM, a lesser,
-// already-accepted gap.
-export async function handleMediaNeverUploaded(messageId: string, conversationId: string): Promise<void> {
-  const supabase = createClient()
-
-  const { data: message } = await supabase
-    .from('messages')
-    .select('id, tenant_id, whatsapp_message_id')
-    .eq('id', messageId)
-    .maybeSingle()
-
-  if (!message) {
-    console.error('[processor:media] handleMediaNeverUploaded: message missing', { messageId })
-    return
-  }
-
-  const resolved = await resolveConversationContext(supabase, conversationId)
-  if (!resolved) {
-    console.error('[processor:media] handleMediaNeverUploaded: conversation missing', { conversationId })
-    return
-  }
-  const { conversation, contactId, contactPhone, contactName, propertyTitle, propertySlug } = resolved
-
-  const ctx: MessageContext = {
-    tenantId:             message.tenant_id,
-    conversationId:       conversation.id,
-    contactId,
-    contactPhone,
-    contactName,
-    messageText:          AUDIO_NEVER_UPLOADED_TEXT,
-    whatsappMessageId:    message.whatsapp_message_id ?? messageId,
-    whatsappAccountId:    conversation.whatsapp_account_id,
-    provider:             'autoresponder',
-    messageId:            message.id,
-    mediaType:            'audio',
-    mediaId:              null,
-    mediaMimeType:        null,
-    mediaFilename:        null,
-    mediaCaption:         null,
-    mediaSha256:          null,
-    mediaDurationSeconds: null,
-    mediaPages:           null,
-    propertyId:           conversation.property_id,
-    propertyTitle,
-    propertySlug,
-    leadContext: (conversation.lead_context as LeadContext | null) ?? {},
-  }
-
-  await sendFixedAudioFallbackAndEscalate(ctx, AUDIO_NEVER_UPLOADED_TEXT, 'audio_never_uploaded')
-}
+// Fase 2A (AUTORESPONDER-ONLY) — resumeAfterMediaReady(),
+// handleMediaNeverUploaded() and their shared resolveConversationContext()
+// helper were deleted here. All three existed solely to resume the AI
+// pipeline after MacroDroid physically extracted an audio file off the
+// Android and uploaded it to /api/webhooks/autoresponder/media. That whole
+// transport is gone (see media-dispatcher.ts / media_events, both removed):
+// AutoResponder media is now answered synchronously by
+// respondMediaNotSupported() above, so nothing can ever produce a
+// media_events row to resume from. Meta media is unaffected — it gets its
+// bytes directly from the Graph API inside processMessage() and never used
+// this path.

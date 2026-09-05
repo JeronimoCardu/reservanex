@@ -12,11 +12,9 @@
     "dev:invite-link": "tsx scripts/generate-invite-link.ts",
     "dev:invite-link:open": "tsx scripts/generate-invite-link.ts $1 --open",
     "dev:cleanup-auth-users": "tsx scripts/cleanup-auth-users.ts",
-    "validate:media-upload": "tsx scripts/validate-media-upload.ts",
     "validate:device-health": "tsx scripts/validate-device-health.ts",
     "validate:onboarding": "tsx scripts/validate-onboarding.ts",
     "validate:purge-tenant": "tsx scripts/validate-purge-tenant.ts",
-    "validate:outbound-ack": "tsx scripts/validate-outbound-ack.ts",
     "validate:security": "tsx scripts/validate-security.ts"
   },
   "dependencies": {

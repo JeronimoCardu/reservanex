@@ -28,55 +28,10 @@ export function normalizeAndValidatePhone(
   return { valid: true, phone: normalized }
 }
 
-// Fase 10 security audit — hostname allowlist. This URL is stored
-// superadmin-side and later fetched server-side by the worker's dispatcher
-// (apps/worker/src/providers/autoresponder/outbound.ts) with no further
-// validation at fetch time — an unrestricted hostname is a real SSRF
-// vector (a malicious or compromised superadmin session could point it at
-// http://169.254.169.254/..., an internal-only service, etc., and the
-// worker would happily fetch it with no signal anything was wrong).
-// Every physically-confirmed real-world sample across Fases 4/8/9 used
-// exactly this host — this product only supports MacroDroid's own cloud
-// trigger service today (see the Fase 10 report for the audit that
-// justified this), so an allowlist of the one legitimate host is strictly
-// safer than an open URL with no reachability restriction at all, and
-// changes nothing for the one real, working configuration.
-const ALLOWED_MACRODROID_HOSTNAME = 'trigger.macrodroid.com'
-
-// Fase 1B (AutoResponder sin MacroDroid, definitivo) — this URL is now
-// OPTIONAL. The active AutoResponder flow (inbound webhook → synchronous
-// internal-server.ts → replies[]) never reads macrodroid_webhook_url; it is
-// only consulted by the legacy messaging_outbox/dispatcher.ts path, which
-// no longer participates in any active flow (Fase 1B report §B). An empty
-// input is valid — it means "not configured", not an error — and resolves
-// to null. A NON-empty value still goes through the full Fase 10 SSRF
-// hardening below (https + host allowlist), unchanged.
-export function validateMacroDroidWebhookUrl(
-  input: string,
-): { valid: true; url: string | null } | { valid: false; error: string } {
-  const trimmed = input.trim()
-  if (!trimmed) return { valid: true, url: null }
-
-  let parsed: URL
-  try {
-    parsed = new URL(trimmed)
-  } catch {
-    return { valid: false, error: 'La URL de MacroDroid no es válida.' }
-  }
-
-  if (parsed.protocol !== 'https:') {
-    return { valid: false, error: 'La URL de MacroDroid debe ser HTTPS.' }
-  }
-
-  if (parsed.hostname !== ALLOWED_MACRODROID_HOSTNAME) {
-    return {
-      valid: false,
-      error: `La URL de MacroDroid debe pertenecer a ${ALLOWED_MACRODROID_HOSTNAME} (host recibido: ${parsed.hostname}).`,
-    }
-  }
-
-  return { valid: true, url: trimmed }
-}
+// Fase 2A (AUTORESPONDER-ONLY) — validateMacroDroidWebhookUrl() and its
+// SSRF host allowlist were deleted here. macrodroid_webhook_url is no longer
+// settable or readable from anywhere in the product; the column survives
+// only as a legacy DB artifact (see Fase 2A report §E).
 
 export type AutoResponderStatus = 'not_configured' | 'incomplete' | 'ready' | 'disabled'
 
@@ -84,15 +39,12 @@ export type AutoResponderStatus = 'not_configured' | 'incomplete' | 'ready' | 'd
 // the Android is online. There is no health-check yet (Fase 5 explicitly
 // excludes it) — never claim "Online" from this alone.
 //
-// Fase 1B — has_macrodroid_url no longer gates completeness. MacroDroid is
-// legacy-only in this version (see Fase 1B report §B/§F): an account with a
-// valid phone and a device token is fully functional for the active
-// AutoResponder flow without it.
+// Fase 2A — completeness is phone + device token. Nothing MacroDroid-related
+// gates an account any more.
 export function deriveAutoResponderStatus(row: {
   phone_number:       string
   active:             boolean
   has_device_token:   boolean
-  has_macrodroid_url: boolean
 } | null): AutoResponderStatus {
   if (!row) return 'not_configured'
 
@@ -110,7 +62,6 @@ export interface AutoResponderPlatformData {
   device_name:                string | null
   active:                     boolean
   has_device_token:           boolean
-  has_macrodroid_url:         boolean
   status:                     AutoResponderStatus
   created_at:                 string
   updated_at:                 string
@@ -121,16 +72,9 @@ export interface AutoResponderPlatformData {
   // concept from `status` above.
   last_device_seen_at:        string | null
   last_inbound_at:            string | null
-  last_outbound_dispatch_at:  string | null
-  last_media_upload_at:       string | null
-  // Fase 8 "outbound ACK" — set only by a valid physical ACK from the macro,
-  // never by the trigger-cloud's own 200 OK (that's last_outbound_dispatch_at
-  // above). Distinguishes "disparado" from "confirmado por el dispositivo" —
-  // never described as "delivered" (see outbound-status.ts).
-  last_outbound_device_ack_at: string | null
 }
 
-// Raw secret fields (inbound_token_hash, macrodroid_webhook_url) are
+// Raw secret fields (inbound_token_hash) are
 // intentionally NOT parameters here — this function's signature itself
 // makes it impossible to accidentally forward them into the sanitized shape
 // that reaches the browser.
@@ -141,14 +85,10 @@ export function sanitizeAutoResponderRow(row: {
   device_name:                string | null
   active:                     boolean
   has_device_token:           boolean
-  has_macrodroid_url:         boolean
   created_at:                 string
   updated_at:                 string
   last_device_seen_at:        string | null
   last_inbound_at:            string | null
-  last_outbound_dispatch_at:  string | null
-  last_media_upload_at:       string | null
-  last_outbound_device_ack_at: string | null
 }): AutoResponderPlatformData {
   return {
     id:                         row.id,
@@ -157,14 +97,10 @@ export function sanitizeAutoResponderRow(row: {
     device_name:                row.device_name,
     active:                     row.active,
     has_device_token:           row.has_device_token,
-    has_macrodroid_url:         row.has_macrodroid_url,
     status:                     deriveAutoResponderStatus(row),
     created_at:                 row.created_at,
     updated_at:                 row.updated_at,
     last_device_seen_at:        row.last_device_seen_at,
     last_inbound_at:            row.last_inbound_at,
-    last_outbound_dispatch_at:  row.last_outbound_dispatch_at,
-    last_media_upload_at:       row.last_media_upload_at,
-    last_outbound_device_ack_at: row.last_outbound_device_ack_at,
   }
 }

@@ -10,7 +10,6 @@ import {
   AlertCircleIcon,
   SmartphoneIcon,
   KeyIcon,
-  LinkIcon,
   CopyIcon,
   RefreshCwIcon,
   WifiIcon,
@@ -23,7 +22,6 @@ import {
   createAutoResponderAccountAction,
   updateAutoResponderPhoneAndNameAction,
   rotateAutoResponderDeviceTokenAction,
-  replaceAutoResponderWebhookUrlAction,
   setAutoResponderActiveAction,
 } from '@/actions/platform-autoresponder'
 import { Button } from '@/components/ui/button'
@@ -116,7 +114,7 @@ function TokenRevealDialog({
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Pegalo en MacroDroid como el valor del header <code className="font-mono">x-reservanex-device-token</code>.
+          Pegalo en AutoResponder como el valor del header <code className="font-mono">x-reservanex-device-token</code>.
         </p>
 
         <DialogFooter className="gap-2 sm:gap-0">
@@ -154,7 +152,7 @@ function RotateTokenConfirm({
           </AlertDialogTitle>
           <AlertDialogDescription>
             El token actual va a dejar de funcionar <span className="font-medium text-foreground">inmediatamente</span>.
-            Vas a tener que actualizar MacroDroid con el token nuevo antes de que el Android pueda volver a recibir mensajes.
+            Vas a tener que actualizar AutoResponder con el token nuevo antes de que el Android pueda volver a recibir mensajes.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -183,12 +181,10 @@ export function AutoResponderPlatformForm({ tenantId, settings }: AutoResponderP
   // Create / edit inline forms
   const [showCreateForm, setShowCreateForm] = useState(!settings)
   const [showEditNumber, setShowEditNumber] = useState(false)
-  const [showEditWebhook, setShowEditWebhook] = useState(false)
   const [showRotateConfirm, setShowRotateConfirm] = useState(false)
 
   const [phoneNumber, setPhoneNumber] = useState(settings?.phone_number ?? '')
   const [deviceName,  setDeviceName]  = useState(settings?.device_name ?? '')
-  const [webhookUrl,  setWebhookUrl]  = useState('')
   const [active,      setActiveField] = useState(settings?.active ?? true)
 
   // Non-null exactly once, right after create/rotate — the ONLY place the
@@ -210,13 +206,11 @@ export function AutoResponderPlatformForm({ tenantId, settings }: AutoResponderP
       const result = await createAutoResponderAccountAction(tenantId, {
         phone_number:           phoneNumber,
         device_name:            deviceName || undefined,
-        macrodroid_webhook_url: webhookUrl,
         active,
       })
       if (result.success && result.data) {
         toast.success('Cuenta AutoResponder creada.')
         setShowCreateForm(false)
-        setWebhookUrl('')
         setRevealedToken(result.data.raw_device_token)
       } else if (!result.success) {
         toast.error(result.error)
@@ -235,23 +229,6 @@ export function AutoResponderPlatformForm({ tenantId, settings }: AutoResponderP
       if (result.success) {
         toast.success('Número/dispositivo actualizado.')
         setShowEditNumber(false)
-      } else {
-        toast.error(result.error)
-      }
-    })
-  }
-
-  function handleReplaceWebhook(e: React.FormEvent) {
-    e.preventDefault()
-    if (!settings) return
-    startTransition(async () => {
-      const result = await replaceAutoResponderWebhookUrlAction(settings.id, tenantId, {
-        macrodroid_webhook_url: webhookUrl,
-      })
-      if (result.success) {
-        toast.success('URL de MacroDroid reemplazada.')
-        setShowEditWebhook(false)
-        setWebhookUrl('')
       } else {
         toast.error(result.error)
       }
@@ -294,12 +271,12 @@ export function AutoResponderPlatformForm({ tenantId, settings }: AutoResponderP
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-sm font-medium">AutoResponder / MacroDroid</CardTitle>
+            <CardTitle className="text-sm font-medium">AutoResponder</CardTitle>
             <Badge className={`gap-1 ${statusCfg.className}`}>
               <statusCfg.Icon className="h-3 w-3" /> {statusCfg.label}
             </Badge>
           </div>
-          <CardDescription>Canal WhatsApp vía Android + AutoResponder for WA + MacroDroid.</CardDescription>
+          <CardDescription>Canal WhatsApp vía Android + AutoResponder for WA.</CardDescription>
         </CardHeader>
 
         {settings && (
@@ -316,12 +293,6 @@ export function AutoResponderPlatformForm({ tenantId, settings }: AutoResponderP
               <span>Token</span>
               <span className={settings.has_device_token ? 'text-green-700 dark:text-green-400' : 'text-destructive'}>
                 {settings.has_device_token ? '✓ configurado' : 'no configurado'}
-              </span>
-            </div>
-            <div className="flex justify-between gap-4">
-              <span>MacroDroid</span>
-              <span className={settings.has_macrodroid_url ? 'text-green-700 dark:text-green-400' : 'text-destructive'}>
-                {settings.has_macrodroid_url ? '✓ configurado' : 'no configurado'}
               </span>
             </div>
             <div className="flex justify-between gap-4">
@@ -354,28 +325,6 @@ export function AutoResponderPlatformForm({ tenantId, settings }: AutoResponderP
                   {fmtRelative(settings.last_inbound_at)}
                 </span>
               </div>
-              <div className="flex justify-between gap-4">
-                <span>Último envío disparado</span>
-                <span className="text-foreground" title={fmt(settings.last_outbound_dispatch_at)}>
-                  {fmtRelative(settings.last_outbound_dispatch_at)}
-                </span>
-              </div>
-              <div className="flex justify-between gap-4">
-                <span>Última ejecución confirmada</span>
-                <span className="text-foreground" title={fmt(settings.last_outbound_device_ack_at)}>
-                  {fmtRelative(settings.last_outbound_device_ack_at)}
-                </span>
-              </div>
-              <div className="flex justify-between gap-4">
-                <span>Último media recibido</span>
-                <span className="text-foreground" title={fmt(settings.last_media_upload_at)}>
-                  {fmtRelative(settings.last_media_upload_at)}
-                </span>
-              </div>
-              <p className="pt-1.5 text-xs text-muted-foreground/70">
-                &quot;Último envío disparado&quot; confirma que MacroDroid aceptó la orden — no que el mensaje fue entregado o leído.
-                &quot;Última ejecución confirmada&quot; es una confirmación física del dispositivo, tampoco un recibo de entrega o lectura de WhatsApp.
-              </p>
             </div>
           </CardContent>
         )}
@@ -416,25 +365,6 @@ export function AutoResponderPlatformForm({ tenantId, settings }: AutoResponderP
                     onChange={(e) => setDeviceName(e.target.value)}
                     disabled={isPending}
                   />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="ar_webhook">
-                    URL de MacroDroid <span className="text-destructive">*</span>
-                  </Label>
-                  <Input
-                    id="ar_webhook"
-                    type="url"
-                    placeholder="https://trigger.macrodroid.com/..."
-                    value={webhookUrl}
-                    onChange={(e) => setWebhookUrl(e.target.value)}
-                    required
-                    disabled={isPending}
-                    autoComplete="off"
-                    className="font-mono text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Es secreta — una vez guardada no se vuelve a mostrar. Solo se puede reemplazar.
-                  </p>
                 </div>
                 <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
@@ -484,43 +414,10 @@ export function AutoResponderPlatformForm({ tenantId, settings }: AutoResponderP
                 <Button type="button" variant="outline" disabled={isPending} onClick={() => setShowEditNumber(false)}>Cancelar</Button>
               </div>
             </form>
-          ) : showEditWebhook ? (
-            <form onSubmit={handleReplaceWebhook}>
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <LinkIcon className="h-4 w-4" />
-                    Reemplazar URL de MacroDroid
-                  </CardTitle>
-                  <CardDescription>La URL actual no se muestra por seguridad. Pegá la nueva para reemplazarla.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <Label htmlFor="new_webhook">URL nueva</Label>
-                  <Input
-                    id="new_webhook"
-                    type="url"
-                    placeholder="https://trigger.macrodroid.com/..."
-                    value={webhookUrl}
-                    onChange={(e) => setWebhookUrl(e.target.value)}
-                    required
-                    disabled={isPending}
-                    autoComplete="off"
-                    className="font-mono text-sm"
-                  />
-                </CardContent>
-              </Card>
-              <div className="mt-3 flex gap-2">
-                <Button type="submit" disabled={isPending}>{isPending ? 'Guardando…' : 'Reemplazar'}</Button>
-                <Button type="button" variant="outline" disabled={isPending} onClick={() => { setShowEditWebhook(false); setWebhookUrl('') }}>Cancelar</Button>
-              </div>
-            </form>
-          ) : (
+                    ) : (
             <div className="flex flex-wrap items-center gap-3">
               <Button type="button" variant="outline" size="sm" onClick={() => setShowEditNumber(true)} disabled={isPending}>
                 Editar número/nombre
-              </Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => setShowEditWebhook(true)} disabled={isPending}>
-                Reemplazar webhook MacroDroid
               </Button>
               <Button type="button" variant="outline" size="sm" onClick={() => setShowRotateConfirm(true)} disabled={isPending}>
                 <RefreshCwIcon className="h-3.5 w-3.5 mr-1.5" />

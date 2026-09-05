@@ -1,6 +1,5 @@
 import type { MessageRow } from '@orderflow/types'
 import { createClient } from '@orderflow/supabase/server'
-import { createAdminClient } from '@orderflow/supabase/admin'
 import type { OutboundTrackingInfo } from '@/lib/outbound-status'
 
 export type { MessageRow }
@@ -34,44 +33,23 @@ export async function listMessages(
   return (data ?? []).reverse()
 }
 
-// Fase 8 "outbound ACK" — messaging_outbox rows for the given messages,
-// keyed by message_id, as a plain object (Map isn't serializable across the
-// server→client boundary; the client component converts this back into a
-// Map). At most one outbox row per message in practice (enqueueOutboxMessage
-// is called once per outbound message), so no aggregation is needed. A
-// message with no key in the returned object has no outbound tracking at
-// all — inbound (customer) messages, Meta-provider sends, or a message
-// whose enqueue itself failed before any row was created — callers must
-// treat that as "no status to show", never as a state.
+// Fase 2A (AUTORESPONDER-ONLY) — this used to read messaging_outbox to show
+// per-message "disparado / confirmado por el dispositivo" badges in the CRM.
+// That table is a legacy artifact now: nothing writes to it any more (the
+// MacroDroid dispatcher that produced those rows was deleted), so the read
+// could only ever return rows from before the migration. It is gone rather
+// than left querying a dead table on every conversation open.
+//
+// The signature is intentionally preserved and returns an empty map, so the
+// message-rendering components keep compiling and simply render no outbound
+// badge — exactly what they already do for Meta sends and inbound messages.
+// Removing the UI plumbing itself belongs to the Conversaciones rework
+// (Fase 2B), not to this cleanup.
 export async function getOutboundTrackingForMessages(
-  tenantId:   string,
-  messageIds: string[],
+  _tenantId:   string,
+  _messageIds: string[],
 ): Promise<Record<string, OutboundTrackingInfo>> {
-  if (messageIds.length === 0) return {}
-
-  // messaging_outbox has RLS enabled with NO policies (service-role only —
-  // same reason every other read/write against this table in this codebase
-  // uses the admin client: actions/messages.ts's enqueue, and all three
-  // AutoResponder webhook routes). The anon/session-scoped client used by
-  // listMessages() above would silently return zero rows here.
-  const admin = createAdminClient()
-  const { data, error } = await admin
-    .from('messaging_outbox')
-    .select('message_id, status, dispatched_at, device_ack_at')
-    .eq('tenant_id', tenantId)
-    .in('message_id', messageIds)
-
-  if (error || !data) return {}
-
-  const result: Record<string, OutboundTrackingInfo> = {}
-  for (const row of data) {
-    result[row.message_id] = {
-      status:       row.status,
-      dispatchedAt: row.dispatched_at,
-      deviceAckAt:  row.device_ack_at,
-    }
-  }
-  return result
+  return {}
 }
 
 export async function createMessage(
