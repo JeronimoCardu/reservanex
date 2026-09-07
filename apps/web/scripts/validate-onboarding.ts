@@ -3,7 +3,8 @@
  * path — tenant creation, owner, default workspace, ai_settings (present vs.
  * absent), AutoResponder account, device health, published property, the
  * setup checklist, public-site resolution, and cross-tenant RLS isolation —
- * against the real linked Supabase project (akvaswvkdqfguksinrwa). No
+ * against the real linked Supabase project (el destino lo impone
+ * assert-safe-target.ts, no este comentario). No
  * running Next.js server needed; repository functions and one route handler
  * (heartbeat) are called directly, same technique as validate-device-health.ts
  * and validate-media-upload.ts.

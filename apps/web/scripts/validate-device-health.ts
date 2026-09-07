@@ -2,7 +2,8 @@
  * Fase 7 Parte A integration validation: exercises
  * POST /api/webhooks/autoresponder/heartbeat and the health-tracking side
  * effects of POST /api/webhooks/autoresponder, directly against the real
- * linked Supabase project (akvaswvkdqfguksinrwa) — no running Next.js
+ * linked Supabase project (el destino lo impone assert-safe-target.ts,
+ * no este comentario) — no running Next.js
  * server needed, same technique as validate-media-upload.ts.
  *
  * Complements the offline Vitest suites (autoresponder-device-health.test.ts

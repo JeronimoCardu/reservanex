@@ -3,6 +3,9 @@ import { createAdminClient } from '@orderflow/supabase/admin'
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type PublicTenant = {
+  // Fase 3A — rubro del tenant. Determina qué formularios dinámicos ofrece
+  // su sitio público (packages/validators/src/forms.ts).
+  vertical: string
   id:                       string
   name:                     string
   logo_url:                 string | null
@@ -83,7 +86,7 @@ export async function getPublicTenant(publicSlug: string): Promise<PublicTenant 
   const { data, error } = await supabase
     .from('tenants')
     .select(
-      'id, name, logo_url, public_logo_url, primary_color, public_slug, public_site_enabled, public_name, public_description, public_cover_image_url, public_primary_color, public_secondary_color, public_phone, public_email, public_instagram_url, public_website_url, status'
+      'id, name, logo_url, public_logo_url, primary_color, public_slug, public_site_enabled, public_name, public_description, public_cover_image_url, public_primary_color, public_secondary_color, public_phone, public_email, public_instagram_url, public_website_url, status, vertical'
     )
     .eq('public_slug', publicSlug)
     .is('deleted_at', null)

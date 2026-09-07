@@ -710,6 +710,82 @@ export type Database = {
           },
         ]
       }
+      form_submissions: {
+        Row: {
+          contact_id: string | null
+          created_at: string
+          entity_id: string | null
+          entity_type: string | null
+          expires_at: string
+          id: string
+          idempotency_key: string
+          intent: string
+          payload: Json
+          publication_ref: string | null
+          reference: string
+          source: string
+          status: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          contact_id?: string | null
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string | null
+          expires_at: string
+          id?: string
+          idempotency_key: string
+          intent: string
+          payload?: Json
+          publication_ref?: string | null
+          reference: string
+          source?: string
+          status?: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          contact_id?: string | null
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string | null
+          expires_at?: string
+          id?: string
+          idempotency_key?: string
+          intent?: string
+          payload?: Json
+          publication_ref?: string | null
+          reference?: string
+          source?: string
+          status?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "form_submissions_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "form_submissions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "form_submissions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants_public"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       impersonation_sessions: {
         Row: {
           ended_at: string | null
@@ -2665,6 +2741,7 @@ export type Database = {
           timezone: string
           trial_ends_at: string | null
           updated_at: string
+          vertical: string
         }
         Insert: {
           approved_at?: string | null
@@ -2735,6 +2812,7 @@ export type Database = {
           timezone?: string
           trial_ends_at?: string | null
           updated_at?: string
+          vertical?: string
         }
         Update: {
           approved_at?: string | null
@@ -2805,6 +2883,7 @@ export type Database = {
           timezone?: string
           trial_ends_at?: string | null
           updated_at?: string
+          vertical?: string
         }
         Relationships: [
           {

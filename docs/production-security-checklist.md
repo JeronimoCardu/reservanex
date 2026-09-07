@@ -5,7 +5,19 @@ from the Fase 10 security audit — every item here maps to a specific,
 verified finding, not a generic best-practices list. **No real values in
 this file — placeholders only.**
 
-## 1. Database (Supabase — `akvaswvkdqfguksinrwa` only)
+> **Proyecto activo: `tjqfysbcmpqlwmzdvynr`.**
+> Este checklist se escribió durante la Fase 10, cuando el proyecto de
+> producción era `akvaswvkdqfguksinrwa`. Desde la Fase 1B el único proyecto autorizado es
+> `tjqfysbcmpqlwmzdvynr`. Los ítems marcados `[x]` se verificaron en su momento contra el
+> proyecto de entonces; **revalidarlos contra `tjqfysbcmpqlwmzdvynr` antes de producción**.
+>
+> Proyectos históricos — **BLOQUEADOS PARA ESCRITURA, NO USAR**:
+> `veqkuriobordivdxvuhj` (ReservaNex original) y `akvaswvkdqfguksinrwa` (copia
+> AutoResponder + MacroDroid). El bloqueo lo aplican
+> `apps/web/scripts/assert-safe-target.ts` y
+> `apps/worker/src/lib/assert-safe-target.ts`.
+
+## 1. Database (Supabase — `tjqfysbcmpqlwmzdvynr` only)
 
 - [x] `supabase/migrations/20260901000002_security_hardening_fase10.sql` reviewed and pushed (Fase 10 Paso 2 — also picked up a second CRITICAL finding during the preflight itself: `tenants.anon_select_active_tenants`, a row-level policy that let an unauthenticated caller read every tenant's `payment_cbu`/`payment_alias`/`primary_owner_email` and other private columns — dropped in the same migration, see its inline comment)
 - [x] `supabase db advisors --linked --type security --level warn` shows zero unexpected findings post-push — only the "Leaked Password Protection" item below (§5) and `extension_in_public` for `btree_gist` (§11) remain
@@ -43,7 +55,7 @@ See `docs/secret-rotation-runbook.md` for the exact procedure for each of these.
 
 ## 5. Supabase project configuration
 
-- [ ] Confirm the app points at `akvaswvkdqfguksinrwa` (or its intended production successor, if the project is ever migrated) and never at `veqkuriobordivdxvuhj`
+- [ ] Confirm the app points at `tjqfysbcmpqlwmzdvynr` and never at either blocked historical project (`veqkuriobordivdxvuhj`, `akvaswvkdqfguksinrwa`)
 - [ ] Enable "Leaked Password Protection" (Dashboard → Authentication → Policies, or the current dashboard's equivalent Auth/password-security section — exact menu wording may have moved; see https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection). **Confirmed via the real Supabase security advisor (Fase 10 Paso 2, `auth_leaked_password_protection`, WARN) that this feature is available for this project and is currently disabled** — not assumed, empirically checked. Dashboard-only setting, cannot be set via migration or CLI.
 - [ ] Review the Redirect URL allowlist against the exact list in §4 — remove any leftover dev/tunnel/wildcard entries
 

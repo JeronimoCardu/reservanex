@@ -74,7 +74,7 @@ device is only silent for one short window instead of two.
 | **Where used** | Every admin-client call in `apps/web` (`SUPABASE_SERVICE_ROLE_KEY`) and every worker DB call (`apps/worker/src/lib/supabase.ts`) — this is the single most powerful credential in the system, bypasses RLS entirely |
 | **Impact of rotating** | The OLD key stops working the moment Supabase issues a new one — every admin-client call using the stale key fails until every deployment is updated |
 | **Downtime** | Real, but short if coordinated: plan a brief window, update both `apps/web` and `apps/worker` hosting environments as close together as possible |
-| **Manual step** | Supabase Dashboard → Project Settings → API → regenerate the service-role key (confirm this is scoped to `akvaswvkdqfguksinrwa` — never the original project) |
+| **Manual step** | Supabase Dashboard → Project Settings → API → regenerate the service-role key (confirm this is scoped to `tjqfysbcmpqlwmzdvynr` — never a blocked historical project: `veqkuriobordivdxvuhj`, `akvaswvkdqfguksinrwa`) |
 | **Update** | Set `SUPABASE_SERVICE_ROLE_KEY` in BOTH the web app's and the worker's hosting environments, redeploy both as close together as possible |
 | **Verify** | `pnpm --filter @orderflow/web validate:onboarding` (exercises the admin client end-to-end against real Supabase) — should pass fully; check the worker picks up a real inbound message afterward |
 | **Rollback** | Supabase does not let you "un-regenerate" a key — if the rotation goes wrong, generate ANOTHER new key and redeploy again. There is no path back to the exact old key once regenerated. |
