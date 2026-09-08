@@ -12,10 +12,12 @@
     "dev:invite-link": "tsx scripts/generate-invite-link.ts",
     "dev:invite-link:open": "tsx scripts/generate-invite-link.ts $1 --open",
     "dev:cleanup-auth-users": "tsx scripts/cleanup-auth-users.ts",
+    "setup:demo-owner": "tsx scripts/setup-demo-owner.ts",
     "validate:device-health": "tsx scripts/validate-device-health.ts",
     "validate:forms": "tsx scripts/validate-forms.ts",
     "validate:auth-hook": "tsx scripts/validate-auth-hook.ts",
     "validate:evidence": "tsx scripts/validate-evidence-integrity.ts",
+    "validate:decisions": "tsx scripts/validate-decisions.ts",
     "validate:onboarding": "tsx scripts/validate-onboarding.ts",
     "validate:purge-tenant": "tsx scripts/validate-purge-tenant.ts",
     "validate:security": "tsx scripts/validate-security.ts"

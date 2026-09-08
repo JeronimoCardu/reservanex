@@ -33,10 +33,19 @@ export interface OperationRequestListItem {
   payload_snapshot:      Record<string, unknown>
   customer_confirmed_at: string
   created_at:            string
+  decided_at:            string | null
+  decision_notes:        string | null
+  decided_by:            string | null
   contact: {
     id:    string
     name:  string | null
     phone: string | null
+  } | null
+  // Fase 3D — quién decidió. null mientras esté pending.
+  decider: {
+    id:    string
+    name:  string | null
+    email: string | null
   } | null
 }
 
@@ -45,7 +54,9 @@ const LIST_COLUMNS = `
   requested_date, requested_end_date, requested_time,
   entity_title_snapshot, publication_ref,
   payload_snapshot, customer_confirmed_at, created_at,
-  contact:contacts!operation_requests_contact_id_fkey ( id, name, phone )
+  decided_at, decision_notes, decided_by,
+  contact:contacts!operation_requests_contact_id_fkey ( id, name, phone ),
+  decider:tenant_users!operation_requests_decided_by_fkey ( id, name, email )
 `
 
 export interface ListOperationRequestsOptions {

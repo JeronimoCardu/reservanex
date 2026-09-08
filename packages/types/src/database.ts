@@ -3512,6 +3512,10 @@ export type Database = {
         Returns: Json
       }
       custom_access_token_hook: { Args: { event: Json }; Returns: Json }
+      decide_operation_request: {
+        Args: { p_action: string; p_notes?: string; p_operation_id: string }
+        Returns: Json
+      }
       is_operator: { Args: never; Returns: boolean }
       is_operator_in_setup: { Args: never; Returns: boolean }
       is_owner: { Args: never; Returns: boolean }

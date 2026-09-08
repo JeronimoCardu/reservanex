@@ -14,6 +14,7 @@ import {
   BotIcon,
   LogOutIcon,
   KeyRoundIcon,
+  InboxIcon,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -23,6 +24,7 @@ import { cn } from '@/lib/utils'
 
 const ALL_NAV_ITEMS = [
   { label: 'Conversaciones',       href: '/dashboard/conversations',    icon: MessageSquareIcon, ownerOnly: false, setupBlocked: true  },
+  { label: 'Solicitudes',          href: '/dashboard/requests',         icon: InboxIcon,         ownerOnly: false, setupBlocked: true  },
   { label: 'Contactos',            href: '/dashboard/contacts',         icon: Users2Icon,        ownerOnly: false, setupBlocked: true  },
   { label: 'Propiedades',          href: '/dashboard/properties',       icon: Building2Icon,     ownerOnly: false, setupBlocked: false },
   { label: 'Reservas',             href: '/dashboard/reservations',     icon: CalendarIcon,      ownerOnly: false, setupBlocked: true  },
