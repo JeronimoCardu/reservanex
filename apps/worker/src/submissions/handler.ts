@@ -300,37 +300,81 @@ async function handlePending(
     return { kind: 'reply', text: msg.rejected }
   }
 
-  // ── CONFIRM (§14) ────────────────────────────────────────────────────────
-  // Transición atómica e idempotente. Los guards del WHERE son la garantía:
-  // solo pasa a confirmed una fila que sigue siendo de este tenant, de este
-  // contacto y todavía en submitted. Si el mismo inbound se procesa dos
-  // veces, el segundo UPDATE afecta 0 filas y se responde "ya confirmado" en
-  // vez de confirmar de nuevo o duplicar nada.
-  const { data: confirmed } = await supabase
-    .from('form_submissions')
-    .update({ status: 'confirmed', confirmed_at: new Date().toISOString() })
-    .eq('id', submission.id)
-    .eq('tenant_id', ctx.tenantId)
-    .eq('contact_id', ctx.contactId)
-    .eq('status', 'submitted')
-    .select('id')
-    .maybeSingle()
+  // ── CONFIRM (Fase 3B §14 + Fase 3C §15) ──────────────────────────────────
+  //
+  // Antes de 3C esto eran dos escrituras sueltas desde el worker: marcar la
+  // submission confirmed y (nuevo en 3C) crear la operación. Entre las dos
+  // había una ventana real — si el proceso muere o falla el segundo INSERT,
+  // el cliente ya escuchó "confirmé tus datos" y no queda nada que la empresa
+  // pueda atender. Una submission "confirmada pero perdida".
+  //
+  // Ahora las dos escrituras viven en UNA transacción de Postgres
+  // (confirm_submission_and_create_operation). O pasan las dos, o no pasa
+  // ninguna. La RPC además revalida tenant, contacto, estado y expiración con
+  // la fila LOCKEADA, así que no depende de lo que leímos más arriba.
+  const { data: rpcData, error: rpcError } = await supabase.rpc(
+    'confirm_submission_and_create_operation',
+    {
+      p_submission_id:   submission.id,
+      p_tenant_id:       ctx.tenantId,
+      p_contact_id:      ctx.contactId,
+      p_conversation_id: ctx.conversationId,
+    },
+  )
 
-  await setPendingSubmission(ctx, null)
-
-  if (!confirmed) {
-    console.warn('[submissions] la transición a confirmed no afectó filas', {
-      submissionId: submission.id,
+  // ── Fail-safe (§22) ──────────────────────────────────────────────────────
+  // Si la RPC falla, la transacción ya revirtió: la submission sigue en
+  // submitted. Lo que NO hay que hacer es decirle al cliente que quedó todo
+  // bien ni limpiar la pendiente — si la borráramos, su próximo "sí" no
+  // sabría qué confirmar y la solicitud quedaría huérfana. Se mantiene la
+  // pendiente y se le pide que reintente: el reintento es idempotente.
+  if (rpcError) {
+    console.error('[submissions] la confirmación transaccional falló — submission intacta', {
+      submissionId: submission.id, code: rpcError.code, error: rpcError.message,
     })
+    return { kind: 'reply', text: msg.confirmationFailed }
+  }
+
+  const outcome = (rpcData as { outcome?: string } | null)?.outcome ?? 'unknown'
+
+  // Estos desenlaces cierran el tema: se limpia la pendiente.
+  if (outcome === 'expired') {
+    await setPendingSubmission(ctx, null)
+    return { kind: 'reply', text: msg.expired }
+  }
+  if (outcome === 'cancelled') {
+    await setPendingSubmission(ctx, null)
+    return { kind: 'reply', text: msg.cancelled }
+  }
+  if (outcome === 'wrong_contact' || outcome === 'not_found') {
+    await setPendingSubmission(ctx, null)
+    return { kind: 'reply', text: msg.notFound }
+  }
+  if (outcome === 'already_confirmed') {
+    await setPendingSubmission(ctx, null)
     return { kind: 'reply', text: msg.alreadyConfirmed }
   }
 
-  console.log('[submissions] submission confirmada por el cliente', {
-    submissionId: submission.id, contactId: ctx.contactId,
+  if (outcome !== 'confirmed') {
+    // Desenlace inesperado: mismo criterio fail-safe que un error duro.
+    console.error('[submissions] outcome inesperado de la RPC', { submissionId: submission.id, outcome })
+    return { kind: 'reply', text: msg.confirmationFailed }
+  }
+
+  // Éxito: recién ACÁ se limpia la pendiente (§25 Q).
+  await setPendingSubmission(ctx, null)
+
+  const result = rpcData as { operation_id?: string; operation_kind?: string }
+  console.log('[submissions] submission confirmada y operación pendiente creada', {
+    submissionId:  submission.id,
+    contactId:     ctx.contactId,
+    operationId:   result.operation_id,
+    operationKind: result.operation_kind,
   })
 
-  // OJO: esto confirma los DATOS del formulario. NO crea reserva ni pedido, y
-  // el mensaje no dice que exista ninguna operación confirmada (§14).
+  // OJO con el vocabulario: se confirmaron los DATOS del formulario y quedó
+  // una solicitud PENDIENTE de aprobación. NO hay reserva ni pedido aceptado,
+  // y el mensaje al cliente no menciona ids ni dice lo contrario (§16).
   return { kind: 'reply', text: msg.confirmed }
 }
 

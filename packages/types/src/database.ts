@@ -1683,6 +1683,124 @@ export type Database = {
           },
         ]
       }
+      operation_requests: {
+        Row: {
+          contact_id: string
+          conversation_id: string | null
+          created_at: string
+          customer_confirmed_at: string
+          decided_at: string | null
+          decided_by: string | null
+          decision_notes: string | null
+          entity_id: string | null
+          entity_title_snapshot: string | null
+          entity_type: string | null
+          id: string
+          intent: string
+          kind: string
+          payload_snapshot: Json
+          publication_ref: string | null
+          requested_date: string | null
+          requested_end_date: string | null
+          requested_time: string | null
+          source_submission_id: string
+          status: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          contact_id: string
+          conversation_id?: string | null
+          created_at?: string
+          customer_confirmed_at: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_notes?: string | null
+          entity_id?: string | null
+          entity_title_snapshot?: string | null
+          entity_type?: string | null
+          id?: string
+          intent: string
+          kind: string
+          payload_snapshot: Json
+          publication_ref?: string | null
+          requested_date?: string | null
+          requested_end_date?: string | null
+          requested_time?: string | null
+          source_submission_id: string
+          status?: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          contact_id?: string
+          conversation_id?: string | null
+          created_at?: string
+          customer_confirmed_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          decision_notes?: string | null
+          entity_id?: string | null
+          entity_title_snapshot?: string | null
+          entity_type?: string | null
+          id?: string
+          intent?: string
+          kind?: string
+          payload_snapshot?: Json
+          publication_ref?: string | null
+          requested_date?: string | null
+          requested_end_date?: string | null
+          requested_time?: string | null
+          source_submission_id?: string
+          status?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "operation_requests_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "operation_requests_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "operation_requests_decided_by_fkey"
+            columns: ["decided_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "operation_requests_source_submission_id_fkey"
+            columns: ["source_submission_id"]
+            isOneToOne: true
+            referencedRelation: "form_submissions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "operation_requests_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "operation_requests_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants_public"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       platform_users: {
         Row: {
           active: boolean
@@ -3383,6 +3501,15 @@ export type Database = {
           p_total_amount: number
         }
         Returns: string
+      }
+      confirm_submission_and_create_operation: {
+        Args: {
+          p_contact_id: string
+          p_conversation_id?: string
+          p_submission_id: string
+          p_tenant_id: string
+        }
+        Returns: Json
       }
       custom_access_token_hook: { Args: { event: Json }; Returns: Json }
       is_operator: { Args: never; Returns: boolean }

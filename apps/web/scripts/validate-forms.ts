@@ -551,35 +551,41 @@ async function main() {
         if (leaked.length === 0) ok(`J. un SELECT sin WHERE del owner de FOOD devuelve solo lo suyo (${all?.length ?? 0})`)
         else nok('J. un SELECT sin WHERE cruzó tenants', JSON.stringify(leaked.slice(0, 3)))
 
-        // Update permitido dentro del tenant, prohibido fuera.
+        // NINGÚN usuario autenticado puede hacer UPDATE — ni sobre lo suyo.
         //
-        // OJO con el valor de status: tiene que ser uno de los que permite
-        // form_submissions_status_check (draft|submitted|confirmed|expired|
-        // cancelled). Con un valor inventado la fila se rechaza por CHECK
-        // (23514) y devuelve 0 filas — indistinguible de una denegación de
-        // RLS si no se mira el error. Por eso acá el error se inspecciona
-        // SIEMPRE: un fallo de constraint no puede hacerse pasar por
-        // aislamiento entre tenants.
+        // Hasta la Fase 3C esta prueba verificaba lo contrario: que el owner SÍ
+        // pudiera cambiar el status de su propia submission. La auditoría de
+        // integridad semántica lo revirtió (migración 20260908000006): status y
+        // confirmed_at significan "EL CLIENTE confirmó por WhatsApp", y un owner
+        // no debe poder fabricar ese hecho con un UPDATE directo. Los writes
+        // legítimos pasan por el service role o por
+        // confirm_submission_and_create_operation().
+        //
+        // Se sigue inspeccionando el error para saber POR QUÉ se rechazó: lo
+        // esperado ahora es 42501 (permission denied), no un 0-filas silencioso.
         if (rentalReference) {
           const { data: updated, error: updErr } = await asReal.from('form_submissions')
             .update({ status: 'confirmed' }).eq('reference', rentalReference).select('id, status')
-          if (updErr) {
-            nok('J. el UPDATE propio falló por error, no por RLS', `${updErr.code}: ${updErr.message}`)
-          } else if ((updated ?? []).length === 1) {
-            ok('J. el owner PUEDE actualizar el estado de una submission propia')
+
+          if (updErr?.code === '42501') {
+            ok('J. el owner NO puede actualizar ni su propia submission (42501)')
+          } else if (!updErr && (updated ?? []).length > 0) {
+            nok('J. el owner pudo actualizar una submission', JSON.stringify(updated))
           } else {
-            nok('J. el owner no pudo actualizar una submission propia (RLS lo negó)')
+            nok('J. el UPDATE propio se rechazó por un motivo inesperado',
+              `${updErr?.code ?? 'sin error'}: ${updErr?.message ?? `${updated?.length ?? 0} filas`}`)
           }
 
           const { data: crossUpdated, error: crossErr } = await asFood.from('form_submissions')
             .update({ status: 'confirmed' }).eq('reference', rentalReference).select('id')
-          if (crossErr) {
-            // 0 filas por un ERROR no prueba aislamiento: sería un falso verde.
-            nok('J. el UPDATE cruzado falló por error, no por RLS', `${crossErr.code}: ${crossErr.message}`)
-          } else if ((crossUpdated ?? []).length === 0) {
-            ok('J. el owner de FOOD NO puede actualizar una submission de REAL')
-          } else {
+
+          if (crossErr?.code === '42501') {
+            ok('J. el owner de FOOD tampoco puede actualizar una submission de REAL (42501)')
+          } else if (!crossErr && (crossUpdated ?? []).length > 0) {
             nok('J. un owner ajeno actualizó una submission', JSON.stringify(crossUpdated))
+          } else {
+            nok('J. el UPDATE cruzado se rechazó por un motivo inesperado',
+              `${crossErr?.code ?? 'sin error'}: ${crossErr?.message ?? `${crossUpdated?.length ?? 0} filas`}`)
           }
         }
 

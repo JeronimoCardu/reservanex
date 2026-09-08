@@ -55,6 +55,13 @@ interface SubmissionMessages {
   alreadyConfirmed:  string
   /** Estado cancelado (§19). */
   cancelled:         string
+  /**
+   * Fase 3C §22 — la confirmación transaccional falló y se revirtió entera.
+   * La submission sigue en submitted y la pendiente sigue viva, así que el
+   * cliente PUEDE reintentar: el reintento es idempotente. Nunca se le dice
+   * que quedó confirmado cuando no lo está.
+   */
+  confirmationFailed: string
 }
 
 const MESSAGES: Record<MessageLanguage, SubmissionMessages> = {
@@ -71,6 +78,9 @@ const MESSAGES: Record<MessageLanguage, SubmissionMessages> = {
     expired:          'Ese formulario ya venció. Completalo nuevamente para continuar.',
     alreadyConfirmed: 'Estos datos ya fueron confirmados.',
     cancelled:        'Ese formulario fue cancelado. Completá uno nuevo para continuar.',
+    // No dice "hubo un error": dice qué hacer. Y NO afirma que se haya
+    // confirmado nada, porque no se confirmó.
+    confirmationFailed: 'No pude registrar la confirmación en este momento. ¿Podés responder "Sí" de nuevo en un minuto?',
   },
 }
 

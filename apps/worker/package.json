@@ -18,7 +18,8 @@
     "validate:save-contact-name": "tsx src/scripts/validate-save-contact-name.ts",
     "seed:autoresponder": "tsx src/scripts/seed-autoresponder-account.ts",
     "validate:autoresponder": "tsx src/scripts/validate-autoresponder.ts",
-    "validate:submissions": "tsx src/scripts/validate-submission-flow.ts"
+    "validate:submissions": "tsx src/scripts/validate-submission-flow.ts",
+    "validate:operations": "tsx src/scripts/validate-operation-requests.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.47.10",

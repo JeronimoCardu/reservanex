@@ -586,6 +586,16 @@ async function main(): Promise<void> {
     nok('Error fatal', err instanceof Error ? err.message : String(err))
   } finally {
     console.log(`\n${HR}\n  limpieza`)
+
+    // Fase 3C — las operaciones se borran ANTES que nada: operation_requests
+    // referencia conversations, contacts Y form_submissions, las tres sin
+    // CASCADE. Con cualquier otro orden, el DELETE de la conversación falla
+    // por FK y arrastra el de la cuenta.
+    for (const id of createdSubmissionIds) {
+      const { error } = await supabase.from('operation_requests').delete().eq('source_submission_id', id)
+      if (error) console.warn(`  ⚠ no se pudo borrar la operación de ${id}: ${error.message}`)
+    }
+
     for (const id of createdConversationIds) {
       // ai_usage_log también referencia conversations: cada llamada a DeepSeek
       // deja una fila ahí. Si no se borra primero, el DELETE de la
@@ -596,7 +606,12 @@ async function main(): Promise<void> {
       if (convErr) console.warn(`  ⚠ no se pudo borrar la conversación ${id}: ${convErr.message}`)
     }
     for (const id of createdSubmissionIds) {
-      try { await supabase.from('form_submissions').delete().eq('id', id) } catch { /* noop */ }
+      // Fase 3C: operation_requests.source_submission_id referencia
+      // form_submissions sin CASCADE, así que la operación se borra primero o
+      // el DELETE de la submission falla por FK.
+      try { await supabase.from('operation_requests').delete().eq('source_submission_id', id) } catch { /* noop */ }
+      const { error: subErr } = await supabase.from('form_submissions').delete().eq('id', id)
+      if (subErr) console.warn(`  ⚠ no se pudo borrar la submission ${id}: ${subErr.message}`)
     }
     for (const id of createdContactIds) {
       try { await supabase.from('contacts').delete().eq('id', id) } catch { /* noop */ }
