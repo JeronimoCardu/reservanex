@@ -125,6 +125,48 @@ export async function getPublicTenantWhatsApp(tenantId: string): Promise<string 
   return raw.replace(/\D/g, '')  // strip non-digits for wa.me
 }
 
+// Fase 3B — el número al que debe escribir quien completó un formulario.
+//
+// Distinto de getPublicTenantWhatsApp() a propósito, y no es duplicación:
+// aquella resuelve "el WhatsApp público del tenant" para los CTA del sitio y
+// es agnóstica de proveedor. Acá hace falta específicamente la cuenta
+// AUTORESPONDER, porque es la única cuyo inbound ejecuta el flujo de
+// confirmación (apps/worker/src/submissions/handler.ts devuelve 'skip' si el
+// provider no es autoresponder). Si mandáramos al número de Meta, el cliente
+// escribiría la referencia y nadie la procesaría.
+//
+// Devuelve null si no hay cuenta AutoResponder activa. El caller debe mostrar
+// un estado controlado, NUNCA inventar un número (§2).
+export async function getTenantAutoResponderWhatsApp(tenantId: string): Promise<string | null> {
+  const supabase = createAdminClient()
+  const { data } = await supabase
+    .from('whatsapp_accounts')
+    .select('display_phone_number, phone_number')
+    .eq('tenant_id', tenantId)
+    .eq('provider', 'autoresponder')
+    .eq('active', true)
+    // Un tenant puede tener más de una cuenta AutoResponder activa: en el
+    // proyecto de QA conviven la real y varias que quedaron de corridas de
+    // validación anteriores. Elegir "la más nueva" o "la más vieja" sería
+    // arbitrario y podría mandar al cliente a un número muerto.
+    //
+    // El criterio es cuál tiene un dispositivo VIVO: last_device_seen_at lo
+    // actualiza el heartbeat del Android, así que la cuenta que más
+    // recientemente dio señales es la que efectivamente va a recibir el
+    // mensaje. NULLS LAST deja al final a las que nunca conectaron, y
+    // created_at desempata de forma estable.
+    .order('last_device_seen_at', { ascending: false, nullsFirst: false })
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (!data) return null
+  const raw = data.display_phone_number ?? data.phone_number ?? null
+  if (!raw) return null
+  const digits = raw.replace(/\D/g, '')   // wa.me exige solo dígitos
+  return digits.length > 0 ? digits : null
+}
+
 // ── Properties ────────────────────────────────────────────────────────────────
 
 export async function listPublicProperties(tenantId: string): Promise<PublicProperty[]> {

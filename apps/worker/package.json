@@ -17,7 +17,8 @@
     "validate:agent-scenarios": "tsx src/scripts/validate-agent-scenarios.ts",
     "validate:save-contact-name": "tsx src/scripts/validate-save-contact-name.ts",
     "seed:autoresponder": "tsx src/scripts/seed-autoresponder-account.ts",
-    "validate:autoresponder": "tsx src/scripts/validate-autoresponder.ts"
+    "validate:autoresponder": "tsx src/scripts/validate-autoresponder.ts",
+    "validate:submissions": "tsx src/scripts/validate-submission-flow.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.47.10",
@@ -25,6 +26,7 @@
   },
   "devDependencies": {
     "@orderflow/types": "workspace:*",
+    "@orderflow/validators": "workspace:*",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",

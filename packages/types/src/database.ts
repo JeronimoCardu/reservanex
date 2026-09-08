@@ -433,6 +433,7 @@ export type Database = {
           lead_status_updated_at: string | null
           lead_status_updated_by: string | null
           needs_human_attention: boolean
+          pending_submission_id: string | null
           property_id: string | null
           source: Database["public"]["Enums"]["conversation_source"]
           status: Database["public"]["Enums"]["conversation_status"]
@@ -472,6 +473,7 @@ export type Database = {
           lead_status_updated_at?: string | null
           lead_status_updated_by?: string | null
           needs_human_attention?: boolean
+          pending_submission_id?: string | null
           property_id?: string | null
           source?: Database["public"]["Enums"]["conversation_source"]
           status?: Database["public"]["Enums"]["conversation_status"]
@@ -511,6 +513,7 @@ export type Database = {
           lead_status_updated_at?: string | null
           lead_status_updated_by?: string | null
           needs_human_attention?: boolean
+          pending_submission_id?: string | null
           property_id?: string | null
           source?: Database["public"]["Enums"]["conversation_source"]
           status?: Database["public"]["Enums"]["conversation_status"]
@@ -548,6 +551,13 @@ export type Database = {
             columns: ["last_message_id"]
             isOneToOne: false
             referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_pending_submission_id_fkey"
+            columns: ["pending_submission_id"]
+            isOneToOne: false
+            referencedRelation: "form_submissions"
             referencedColumns: ["id"]
           },
           {
@@ -712,6 +722,7 @@ export type Database = {
       }
       form_submissions: {
         Row: {
+          confirmed_at: string | null
           contact_id: string | null
           created_at: string
           entity_id: string | null
@@ -729,6 +740,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          confirmed_at?: string | null
           contact_id?: string | null
           created_at?: string
           entity_id?: string | null
@@ -746,6 +758,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          confirmed_at?: string | null
           contact_id?: string | null
           created_at?: string
           entity_id?: string | null

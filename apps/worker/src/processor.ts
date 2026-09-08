@@ -10,6 +10,7 @@ import { downloadMetaMedia, uploadWhatsAppMediaToStorage } from './whatsapp/medi
 import { transcribeAudio } from './whatsapp/transcribe'
 import { executeEscalateToHuman } from './tools/escalate-to-human'
 import { decideAutoResponderDelivery } from './providers/autoresponder/delivery-decision'
+import { runSubmissionFlow } from './submissions/handler'
 import {
   decideHumanMode,
   computeHumanUntilIso,
@@ -199,6 +200,29 @@ async function respondMediaNotSupported(
   })
 }
 
+// Has this exact inbound already been answered by an AI message?
+//
+// The DB-level unique index (messages_one_ai_reply_per_inbound_idx) is the
+// authoritative guard; this application-level check avoids doing the work
+// twice when the duplicate is detected early. Two scenarios it covers:
+//   1. Meta retried the same webhook POST → same wamid enqueued twice
+//   2. message_queue has a duplicate row for the same payload
+//
+// Fase 3B — shared by runAIPipeline() and the submission flow. A retried
+// inbound carrying "SUB-X72K91" or "sí" must not send the summary twice nor
+// run the confirmation transition twice (§24).
+async function alreadyAnsweredInbound(ctx: MessageContext): Promise<{ id: string } | null> {
+  const supabase = createClient()
+  const { data } = await supabase
+    .from('messages')
+    .select('id')
+    .eq('tenant_id', ctx.tenantId)
+    .eq('sender_type', 'ai')
+    .filter('metadata->>in_reply_to_whatsapp_message_id', 'eq', ctx.whatsappMessageId)
+    .maybeSingle()
+  return data ?? null
+}
+
 // Dedupe guard → AI slot claim → generateAIReply → dispatch. Every caller
 // now reaches this synchronously, with ctx.messageText already final (text
 // for AutoResponder, text or a transcribed/placeholder body for Meta) —
@@ -208,20 +232,9 @@ async function runAIPipeline(ctx: MessageContext, signal?: AbortSignal): Promise
   const supabase = createClient()
 
   // ── Dedupe guard ────────────────────────────────────────────────────────────
-  // Before calling the LLM, check whether we already have an AI reply for this
-  // exact inbound wamid. This covers two scenarios:
-  //   1. Meta retried the same webhook POST → same wamid enqueued twice
-  //   2. message_queue has a duplicate row for the same payload
-  // The DB-level unique index (messages_one_ai_reply_per_inbound_idx) is the
-  // authoritative guard; this application-level check avoids an unnecessary
-  // LLM call when the duplicate is detected early.
-  const { data: existingReply } = await supabase
-    .from('messages')
-    .select('id')
-    .eq('tenant_id', ctx.tenantId)
-    .eq('sender_type', 'ai')
-    .filter('metadata->>in_reply_to_whatsapp_message_id', 'eq', ctx.whatsappMessageId)
-    .maybeSingle()
+  // See alreadyAnsweredInbound() — shared with the Fase 3B submission flow so
+  // both deterministic and LLM replies get the same idempotency guarantee.
+  const existingReply = await alreadyAnsweredInbound(ctx)
 
   if (existingReply) {
     console.log('[processor] duplicate inbound already answered — skipping', {
@@ -668,6 +681,48 @@ export async function processMessage(
       await handleAudioTranscriptionFailure(ctx)
       return finish()
     }
+  }
+
+  // ── Fase 3B: formulario → WhatsApp → confirmación ───────────────────────────
+  // Corre DESPUÉS del gate de HUMAN (§5): mientras una persona atiende desde
+  // WhatsApp Web nunca se llega hasta acá, así que una referencia mandada en
+  // ese momento no toca la submission ni rompe el silencio de la Fase 2B.
+  //
+  // Corre ANTES de runAIPipeline y, si contesta, la IA no se llama en absoluto
+  // (§12): el resumen y la confirmación son determinísticos, así que no hay
+  // tokens gastados ni margen para que el modelo altere los datos (§10).
+  //
+  // Si no hay referencia ni confirmación pendiente devuelve 'skip' y el
+  // pipeline normal sigue exactamente igual que antes (§21).
+  const submissionFlow = await runSubmissionFlow(ctx)
+  if (submissionFlow.kind === 'reply') {
+    // Mismo guard de idempotencia que usa el camino con LLM (§24).
+    const duplicate = await alreadyAnsweredInbound(ctx)
+    if (duplicate) {
+      console.log('[processor:submissions] inbound duplicado ya respondido — se omite', {
+        inboundWhatsAppMessageId: ctx.whatsappMessageId,
+        conversationId:           ctx.conversationId,
+        aiMessageId:              duplicate.id,
+      })
+      return finish()
+    }
+
+    // Se entrega por el MISMO camino que cualquier otra respuesta:
+    // deliverAIReply decide transporte y persistencia juntos, así que esto
+    // hereda la garantía de que nunca se persiste un mensaje que el cliente
+    // no recibió, y jamás toca messaging_outbox (§12).
+    const deterministic: LLMResult = {
+      text:         submissionFlow.text,
+      finishReason: 'stop',
+      // Marcado explícito: en auditoría queda claro que este texto no lo
+      // generó un modelo.
+      model:        'deterministic/submission-confirmation',
+    }
+    const { aiMessageId, dispatch } = await deliverAIReply(ctx, deterministic)
+    console.log('[processor:submissions] respuesta determinística entregada', {
+      conversationId: ctx.conversationId, aiMessageId, dispatch,
+    })
+    return finish()
   }
 
   try {

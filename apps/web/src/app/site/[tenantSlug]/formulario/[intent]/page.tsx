@@ -6,7 +6,10 @@ import {
   isIntentAllowedForVertical,
   getFormDefinition,
 } from '@orderflow/validators'
-import { getPublicTenant } from '@/lib/repositories/public-site.repository'
+import {
+  getPublicTenant,
+  getTenantAutoResponderWhatsApp,
+} from '@/lib/repositories/public-site.repository'
 import { DynamicForm } from '@/components/site/dynamic-form'
 
 export const dynamic = 'force-dynamic'
@@ -66,6 +69,12 @@ export default async function FormPage({ params, searchParams }: PageProps) {
   // (→ el visitante puede enviar una consulta genuinamente distinta).
   const idempotencyKey = randomUUID()
 
+  // Fase 3B — el WhatsApp al que sigue la conversación después de enviar.
+  // Se resuelve acá, en el servidor, y NUNCA se inventa: si el tenant no tiene
+  // una cuenta AutoResponder activa esto es null y el formulario muestra un
+  // estado controlado en lugar de un link roto (§2).
+  const whatsappNumber = await getTenantAutoResponderWhatsApp(tenant.id)
+
   return (
     <main className="mx-auto w-full max-w-lg px-4 py-8 sm:py-12">
       <DynamicForm
@@ -73,6 +82,7 @@ export default async function FormPage({ params, searchParams }: PageProps) {
         intent={parsedIntent.data}
         publicationRef={ref ?? null}
         idempotencyKey={idempotencyKey}
+        whatsappNumber={whatsappNumber}
       />
     </main>
   )
