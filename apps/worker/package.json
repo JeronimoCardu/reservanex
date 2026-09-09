@@ -20,7 +20,9 @@
     "validate:autoresponder": "tsx src/scripts/validate-autoresponder.ts",
     "validate:submissions": "tsx src/scripts/validate-submission-flow.ts",
     "validate:operations": "tsx src/scripts/validate-operation-requests.ts",
-    "validate:race": "tsx src/scripts/validate-reservation-race.ts"
+    "validate:race": "tsx src/scripts/validate-reservation-race.ts",
+    "validate:pricing-parity": "tsx src/scripts/validate-pricing-parity.ts",
+    "validate:eligibility": "tsx src/scripts/validate-reservation-eligibility.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.47.10",

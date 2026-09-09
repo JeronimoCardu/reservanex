@@ -111,6 +111,70 @@ export async function decideOperationRequestAction(
       }
     }
 
+    // ── Fase 3E-A.2 — la solicitud no cumple las reglas de la propiedad ────
+    // Mismas reglas que aplica la IA. No se decide nada: la solicitud queda
+    // pending para que el asesor la rechace, ajuste la propiedad o hable con
+    // el cliente. No se rechaza automáticamente.
+    case 'ineligible': {
+      revalidatePath(REQUESTS_PATH)
+      const d = data as {
+        reason?: string
+        minimum_stay_nights?: number
+        requested_nights?: number
+        capacity?: number
+        requested_guests?: number
+        commercial_status?: string
+        operation_type?: string
+      } | null
+
+      let detalle: string
+      switch (d?.reason) {
+        case 'minimum_stay_not_met':
+          detalle = `Esta propiedad requiere una estadía mínima de ${d.minimum_stay_nights} ` +
+                    `noche${d.minimum_stay_nights === 1 ? '' : 's'} y la solicitud es de ${d.requested_nights}.`
+          break
+        case 'capacity_exceeded':
+          detalle = `La cantidad de huéspedes (${d.requested_guests}) supera la capacidad de la ` +
+                    `propiedad (${d.capacity}).`
+          break
+        case 'property_not_available': {
+          const labels: Record<string, string> = {
+            rented: 'alquilada', paused: 'pausada', sold: 'vendida',
+          }
+          const label = labels[d.commercial_status ?? ''] ?? d.commercial_status ?? 'no disponible'
+          detalle = `La propiedad está ${label}, así que no acepta reservas.`
+          break
+        }
+        case 'not_temporary_rental':
+          detalle = d.operation_type === 'sale'
+            ? 'La propiedad es de venta, no de alquiler temporal.'
+            : 'La propiedad es de alquiler tradicional, no de alquiler temporal.'
+          break
+        default:
+          detalle = 'La solicitud no cumple las reglas de la propiedad.'
+      }
+
+      return {
+        success: false,
+        error: `${detalle} No se creó ninguna reserva y la solicitud sigue pendiente.`,
+      }
+    }
+
+    // ── Cierre 3E-A.2 — el check-in de la solicitud ya pasó ────────────────
+    // Regla propia de este flujo: aprobar no puede crear una pre-reserva que
+    // arranque en el pasado. La creación manual sí puede registrar reservas
+    // retroactivas — son cosas distintas a propósito.
+    //
+    // Como el resto, no decide nada: la solicitud queda pending y Rechazar
+    // sigue disponible.
+    case 'past_start_date': {
+      revalidatePath(REQUESTS_PATH)
+      return {
+        success: false,
+        error: 'El check-in de esta solicitud ya pasó. No se creó ninguna reserva y la solicitud sigue pendiente.',
+      }
+    }
+
     case 'invalid_dates':
       return { success: false, error: 'Las fechas de la solicitud no son válidas. No se creó ninguna reserva.' }
 

@@ -222,7 +222,11 @@ async function main(): Promise<void> {
         // 4 noches × 50000 + 8000 de limpieza = 208000
         if (r?.nightly_price_snapshot === 50000 && r.subtotal_amount === 200000 &&
             r.fees_amount === 8000 && r.total_amount === 208000 && r.pricing_mode_snapshot === 'fixed') {
-          ok('E. conserva su snapshot de precio calculado en TypeScript (4×50000 + 8000 = 208000)')
+          // Fase 3E-A.1: la fórmula ya no vive en TypeScript, sino en
+          // public.quote_temporary_rental. El valor esperado NO cambió — es
+          // justamente la prueba de que unificar el pricing no degradó el
+          // camino de la IA.
+          ok('E. conserva su snapshot de precio (4×50000 + 8000 = 208000)')
         } else {
           nok('E. el pricing de la IA se degradó', JSON.stringify(r))
         }

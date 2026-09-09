@@ -3444,6 +3444,16 @@ export type Database = {
       auth_user_role: { Args: never; Returns: string }
       auth_user_type: { Args: never; Returns: string }
       auth_workspace_ids: { Args: never; Returns: string[] }
+      check_temporary_rental_eligibility: {
+        Args: {
+          p_end: string
+          p_guests?: number
+          p_property_id: string
+          p_start: string
+          p_tenant_id: string
+        }
+        Returns: Json
+      }
       claim_ai_auto_reply_slot: {
         Args: { p_conversation_id: string; p_tenant_id: string }
         Returns: {
@@ -3536,6 +3546,15 @@ export type Database = {
       is_tenant_user: { Args: never; Returns: boolean }
       next_receipt_number: { Args: { p_tenant_id: string }; Returns: string }
       normalize_contact_phone_ar: { Args: { phone: string }; Returns: string }
+      quote_temporary_rental: {
+        Args: {
+          p_end: string
+          p_property_id: string
+          p_start: string
+          p_tenant_id: string
+        }
+        Returns: Json
+      }
       record_monthly_rental_payment: {
         Args: {
           p_amount: number

@@ -7,6 +7,8 @@ import * as repo from '@/lib/repositories/reservations.repository'
 import * as events from '@/lib/repositories/reservation-events.repository'
 import type { ActionResult } from '@/lib/action-result'
 import type { Json } from '@orderflow/types'
+import { quoteTemporaryRental } from '@/lib/pricing/quote-temporary-rental'
+import { checkTemporaryRentalEligibility, eligibilityMessage } from '@/lib/reservations/eligibility'
 import type { NoteRow } from '@/lib/repositories/notes.repository'
 import type { ReservationEventRow } from '@/lib/repositories/reservation-events.repository'
 
@@ -242,6 +244,21 @@ export async function rescheduleReservationAction(
     return { success: false, error: 'Esta reserva no tiene propiedad asignada.' }
   }
 
+  // Fase 3E-A.2 — reglas de elegibilidad con la fuente canónica.
+  //
+  // Antes, reprogramar no verificaba estadía mínima, capacidad ni estado
+  // comercial: se podía mover una reserva a un rango de 1 noche en una
+  // propiedad con mínimo de 3, o subir los huéspedes por encima de la
+  // capacidad. La IA rechazaba las dos cosas. Ahora las evalúa la misma función
+  // que usan la IA, la creación manual y la aprobación de solicitudes.
+  //
+  // Una reprogramación siempre opera sobre una reserva pre_reserved o confirmed
+  // (así la filtra la consulta de arriba), o sea que el resultado SIEMPRE ocupa
+  // fechas — la elegibilidad aplica siempre, sin compuerta.
+  //
+  // El chequeo de operation_type se conserva con su mensaje propio: en este
+  // camino "esta reserva no es de alquiler temporal" es más claro para el
+  // asesor que el mensaje genérico de la función.
   const { data: reschProp } = await supabase
     .from('properties')
     .select('operation_type')
@@ -251,6 +268,13 @@ export async function rescheduleReservationAction(
     .maybeSingle()
   if (reschProp?.operation_type !== 'temporary_rental') {
     return { success: false, error: 'Solo se pueden reprogramar reservas de alquiler temporario.' }
+  }
+
+  const elig = await checkTemporaryRentalEligibility(
+    supabase, ctx.tenantId, reservation.property_id, start_date, end_date, guests,
+  )
+  if (!elig.eligible) {
+    return { success: false, error: `No se puede reprogramar. ${eligibilityMessage(elig)}` }
   }
 
   const now = new Date().toISOString()
@@ -302,46 +326,31 @@ export async function rescheduleReservationAction(
     return { success: false, error: 'No se puede reprogramar: esas fechas están bloqueadas.' }
   }
 
-  const { data: property } = await supabase
-    .from('properties')
-    .select('pricing_mode, currency, base_price_per_night, cleaning_fee, temporary_deposit_amount, temporary_deposit_percent')
-    .eq('tenant_id', ctx.tenantId)
-    .eq('id', reservation.property_id)
-    .is('deleted_at', null)
-    .maybeSingle()
+  // Pricing con el motor canónico (public.quote_temporary_rental) — la misma
+  // función SQL que usa la IA y la materialización de solicitudes aprobadas.
+  // Ya no se leen las columnas de precio de la propiedad acá: no hay fórmula.
+  const quote = await quoteTemporaryRental(supabase, ctx.tenantId, reservation.property_id, start_date, end_date)
 
-  const startDate   = new Date(`${start_date}T00:00:00Z`)
-  const endDate     = new Date(`${end_date}T00:00:00Z`)
-  const nightsCount = Math.round((endDate.getTime() - startDate.getTime()) / 86400000)
-  const currency    = property?.currency ?? reservation.price_currency ?? 'ARS'
-
-  let nightly_price_snapshot:  number | null = null
-  let subtotal_amount:         number | null = null
-  let fees_amount                            = 0
-  let total_amount:            number | null = null
-  let deposit_required_amount: number | null = null
-  const pricing_breakdown: Record<string, unknown> = {}
-  const pricing_mode_snapshot = property?.pricing_mode ?? 'consult'
-
-  if (property?.pricing_mode === 'fixed' && property.base_price_per_night) {
-    nightly_price_snapshot  = property.base_price_per_night
-    subtotal_amount         = nightly_price_snapshot * nightsCount
-    fees_amount             = property.cleaning_fee ?? 0
-    total_amount            = subtotal_amount + fees_amount
-
-    if (property.temporary_deposit_amount) {
-      deposit_required_amount = property.temporary_deposit_amount
-    } else if (property.temporary_deposit_percent) {
-      deposit_required_amount = Math.round(total_amount * property.temporary_deposit_percent / 100)
-    }
-
-    pricing_breakdown['nightly_price'] = nightly_price_snapshot
-    pricing_breakdown['nights']        = nightsCount
-    pricing_breakdown['subtotal']      = subtotal_amount
-    pricing_breakdown['cleaning_fee']  = fees_amount
-    pricing_breakdown['total']         = total_amount
-    pricing_breakdown['deposit']       = deposit_required_amount
+  if (!quote.ok && quote.reason === 'rpc_error') {
+    return { success: false, error: 'No se pudo recalcular el precio para las fechas nuevas. Intentá de nuevo.' }
   }
+
+  // Propiedad borrada: se conserva el comportamiento previo — reprogramar sigue
+  // permitido, sin importes, manteniendo la moneda que ya tenía la reserva.
+  const nightsCount = quote.ok
+    ? quote.nights
+    : Math.round(
+        (new Date(`${end_date}T00:00:00Z`).getTime() - new Date(`${start_date}T00:00:00Z`).getTime()) / 86400000,
+      )
+  const currency = quote.ok ? quote.currency : (reservation.price_currency ?? 'ARS')
+
+  const nightly_price_snapshot  = quote.ok ? quote.nightly_price : null
+  const subtotal_amount         = quote.ok ? quote.subtotal      : null
+  const fees_amount             = quote.ok ? quote.fees          : 0
+  const total_amount            = quote.ok ? quote.total         : null
+  const deposit_required_amount = quote.ok ? quote.deposit       : null
+  const pricing_mode_snapshot   = quote.ok ? quote.pricing_mode  : 'consult'
+  const pricing_breakdown: Record<string, unknown> = quote.ok ? quote.breakdown : {}
 
   try {
     const { conversation_id } = await repo.rescheduleReservation(ctx.tenantId, reservationId, {
@@ -417,7 +426,7 @@ export async function createReservationAction(
 
   const { data: property } = await supabase
     .from('properties')
-    .select('id, operation_type, pricing_mode, currency, base_price_per_night, cleaning_fee, temporary_deposit_amount, temporary_deposit_percent')
+    .select('id, operation_type')
     .eq('tenant_id', ctx.tenantId)
     .eq('id', d.property_id)
     .is('deleted_at', null)
@@ -453,7 +462,27 @@ export async function createReservationAction(
   }
 
   const targetStatus = d.status ?? 'pre_reserved'
+
+  // Fase 3E-A.2 — elegibilidad y disponibilidad comparten la MISMA compuerta:
+  // solo cuando el estado resultante ocupa fechas.
+  //
+  // Esa compuerta ya existía para la disponibilidad y es la correcta también
+  // para las reglas: un registro 'inquiry' o 'interested' es un lead, no una
+  // reserva que exista. Pedirle estadía mínima a una consulta impediría anotar
+  // que alguien preguntó por una noche, que es información legítima. Es el mismo
+  // criterio que aplica trg_guard_reservation_overlap, que solo actúa cuando la
+  // fila resultante bloquea.
+  //
+  // Con esto se cierra el agujero de §10: la IA bloquea 6 huéspedes, Solicitudes
+  // bloquea 6 y ahora Crear reserva manual también.
   if (targetStatus === 'pre_reserved' || targetStatus === 'confirmed') {
+    const elig = await checkTemporaryRentalEligibility(
+      supabase, ctx.tenantId, d.property_id, d.start_date, d.end_date, d.guests,
+    )
+    if (!elig.eligible) {
+      return { success: false, error: `No se puede crear la reserva. ${eligibilityMessage(elig)}` }
+    }
+
     const now = new Date().toISOString()
 
     const { data: confirmedConflicts } = await supabase
@@ -502,38 +531,24 @@ export async function createReservationAction(
     }
   }
 
-  const startDate   = new Date(`${d.start_date}T00:00:00Z`)
-  const endDate     = new Date(`${d.end_date}T00:00:00Z`)
-  const nightsCount = Math.round((endDate.getTime() - startDate.getTime()) / 86400000)
-  const currency    = property?.currency ?? 'ARS'
+  // Pricing con el motor canónico (public.quote_temporary_rental) — sin fórmula
+  // acá. La propiedad ya se validó arriba, así que la cotización solo puede
+  // fallar por un error real de infraestructura.
+  const quote = await quoteTemporaryRental(supabase, ctx.tenantId, d.property_id, d.start_date, d.end_date)
 
-  let nightly_price_snapshot:  number | null = null
-  let subtotal_amount:         number | null = null
-  let fees_amount                            = 0
-  let total_amount:            number | null = null
-  let deposit_required_amount: number | null = null
-  const pricing_breakdown: Record<string, unknown> = {}
-  const pricing_mode_snapshot = property?.pricing_mode ?? 'consult'
-
-  if (property?.pricing_mode === 'fixed' && property.base_price_per_night) {
-    nightly_price_snapshot  = property.base_price_per_night
-    subtotal_amount         = nightly_price_snapshot * nightsCount
-    fees_amount             = property.cleaning_fee ?? 0
-    total_amount            = subtotal_amount + fees_amount
-
-    if (property.temporary_deposit_amount) {
-      deposit_required_amount = property.temporary_deposit_amount
-    } else if (property.temporary_deposit_percent) {
-      deposit_required_amount = Math.round(total_amount * property.temporary_deposit_percent / 100)
-    }
-
-    pricing_breakdown['nightly_price'] = nightly_price_snapshot
-    pricing_breakdown['nights']        = nightsCount
-    pricing_breakdown['subtotal']      = subtotal_amount
-    pricing_breakdown['cleaning_fee']  = fees_amount
-    pricing_breakdown['total']         = total_amount
-    pricing_breakdown['deposit']       = deposit_required_amount
+  if (!quote.ok) {
+    return { success: false, error: 'No se pudo calcular el precio de la reserva. Intentá de nuevo.' }
   }
+
+  const nightsCount             = quote.nights
+  const currency                = quote.currency
+  const nightly_price_snapshot  = quote.nightly_price
+  const subtotal_amount         = quote.subtotal
+  const fees_amount             = quote.fees
+  const total_amount            = quote.total
+  const deposit_required_amount = quote.deposit
+  const pricing_mode_snapshot   = quote.pricing_mode
+  const pricing_breakdown: Record<string, unknown> = quote.breakdown
 
   const expires_at = targetStatus === 'pre_reserved'
     ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()

@@ -2,6 +2,8 @@ import { createClient } from '../lib/supabase'
 import type { LLMTool } from '../lib/llm'
 import { validateWeekday } from './validate-weekday'
 import { checkPropertyAvailability } from './availability-check.shared'
+import { quoteTemporaryRental } from './pricing.shared'
+import { checkTemporaryRentalEligibility } from './eligibility.shared'
 
 export const checkPropertyAvailabilityTool: LLMTool = {
   type: 'function',
@@ -47,21 +49,21 @@ export const checkPropertyAvailabilityTool: LLMTool = {
   },
 }
 
-interface PropertyPricingRow {
-  id:                        string
-  title:                     string
-  commercial_status:         string
-  operation_type:            string
-  pricing_mode:              string
-  currency:                  string
-  capacity:                  number | null
-  base_price_per_night:      number | null
-  minimum_stay_nights:       number
-  cleaning_fee:              number
-  temporary_deposit_amount:  number | null
-  temporary_deposit_percent: number | null
-  check_in_time:             string | null
-  check_out_time:            string | null
+// Fase 3E-A.1 y 3E-A.2: este archivo ya no lee ninguna columna de precio
+// (base_price_per_night, cleaning_fee, temporary_deposit_*) ni de reglas
+// (commercial_status, operation_type, capacity, minimum_stay_nights, pricing_mode).
+// Las leen las funciones canónicas: quote_temporary_rental y
+// check_temporary_rental_eligibility. No tenerlas a mano es deliberado — hace
+// estructuralmente imposible que este archivo vuelva a calcular un precio o a
+// reimplementar una regla.
+//
+// Lo único que queda es lo que este archivo sí necesita para hablarle al
+// cliente: cómo se llama la propiedad y los horarios de check-in/out.
+interface PropertyRow {
+  id:             string
+  title:          string
+  check_in_time:  string | null
+  check_out_time: string | null
 }
 
 /**
@@ -128,52 +130,79 @@ export async function executeCheckPropertyAvailability(
 
   const { data: property } = await supabase
     .from('properties')
-    .select('id, title, commercial_status, operation_type, pricing_mode, currency, capacity, base_price_per_night, minimum_stay_nights, cleaning_fee, temporary_deposit_amount, temporary_deposit_percent, check_in_time, check_out_time')
+    .select('id, title, check_in_time, check_out_time')
     .eq('tenant_id', tenantId)
     .eq('id', propertyId)
     .eq('published', true)
     .is('deleted_at', null)
-    .maybeSingle() as { data: PropertyPricingRow | null }
+    .maybeSingle() as { data: PropertyRow | null }
 
   if (!property) {
     return JSON.stringify({ error: 'Propiedad no disponible para consulta.' })
   }
 
-  if (property.commercial_status !== 'available') {
-    const statusLabels: Record<string, string> = {
-      rented: 'alquilada', paused: 'pausada temporalmente', sold: 'vendida',
+  // ─── Elegibilidad con las reglas canónicas ──────────────────────────────────
+  // Estado comercial, tipo de operación, capacidad y estadía mínima ya no se
+  // evalúan acá: los evalúa public.check_temporary_rental_eligibility, la misma
+  // función que usan el tool de creación, la creación manual, la reprogramación
+  // y la aprobación de solicitudes.
+  //
+  // El orden de evaluación lo fija la función SQL y replica exactamente el que
+  // tenía este archivo, así que para una misma entrada el primer motivo
+  // reportado al cliente sigue siendo el mismo. Los mensajes son los de antes,
+  // palabra por palabra.
+  const elig = await checkTemporaryRentalEligibility(
+    supabase, tenantId, propertyId, startStr, endStr, guests,
+  )
+
+  if (!elig.eligible) {
+    switch (elig.reason) {
+      case 'property_not_available': {
+        const statusLabels: Record<string, string> = {
+          rented: 'alquilada', paused: 'pausada temporalmente', sold: 'vendida',
+        }
+        const raw   = elig.commercial_status ?? ''
+        const label = statusLabels[raw] ?? raw
+        return JSON.stringify({
+          available: false,
+          reason:    `Esta propiedad no está disponible comercialmente — actualmente está ${label}. Ofrecé propiedades alternativas disponibles.`,
+          commercial_status: raw,
+        })
+      }
+      case 'not_temporary_rental': {
+        const label = elig.operation_type === 'sale' ? 'venta' : 'alquiler tradicional'
+        return JSON.stringify({
+          available: false,
+          reason:    `Esta propiedad es de ${label} — no acepta reservas de alquiler temporal.`,
+        })
+      }
+      case 'capacity_exceeded':
+        return JSON.stringify({
+          available: false,
+          reason:    `Capacidad máxima: ${elig.capacity} personas. Solicitaron ${elig.requested_guests}.`,
+        })
+      case 'minimum_stay_not_met': {
+        const min = elig.minimum_stay_nights ?? 1
+        return JSON.stringify({
+          available: false,
+          reason:    `Estadía mínima: ${min} noche${min !== 1 ? 's' : ''}. Solicitaron ${elig.requested_nights}.`,
+        })
+      }
+      default:
+        // property_not_found / invalid_dates son inalcanzables acá (la propiedad
+        // se acaba de leer y las fechas se validaron arriba); rpc_error sí es
+        // posible y es una falla de infraestructura, no un "no disponible".
+        console.error('[reservation:availability:eligibility-failed]', {
+          conversationId, propertyId, tenantId, reason: elig.reason,
+        })
+        return JSON.stringify({
+          error: 'No se pudo verificar la propiedad. Decile al cliente que aguarde un momento y volvé a intentar.',
+        })
     }
-    const label = statusLabels[property.commercial_status] ?? property.commercial_status
-    return JSON.stringify({
-      available: false,
-      reason:    `Esta propiedad no está disponible comercialmente — actualmente está ${label}. Ofrecé propiedades alternativas disponibles.`,
-      commercial_status: property.commercial_status,
-    })
   }
 
-  if (property.operation_type !== 'temporary_rental') {
-    const label = property.operation_type === 'sale' ? 'venta' : 'alquiler tradicional'
-    return JSON.stringify({
-      available: false,
-      reason:    `Esta propiedad es de ${label} — no acepta reservas de alquiler temporal.`,
-    })
-  }
-
-  if (guests !== undefined && property.capacity !== null && guests > property.capacity) {
-    return JSON.stringify({
-      available: false,
-      reason:    `Capacidad máxima: ${property.capacity} personas. Solicitaron ${guests}.`,
-    })
-  }
-
-  const nightsCount = Math.round((endDate.getTime() - startDate.getTime()) / 86400000)
-  const minStay     = property.minimum_stay_nights ?? 1
-  if (nightsCount < minStay) {
-    return JSON.stringify({
-      available: false,
-      reason:    `Estadía mínima: ${minStay} noche${minStay !== 1 ? 's' : ''}. Solicitaron ${nightsCount}.`,
-    })
-  }
+  // Las mismas noches que usa el motor de pricing: no hay dos cálculos.
+  const nightsCount = elig.nights
 
   // Shared availability check (same logic as create_pending_reservation)
   const avail = await checkPropertyAvailability(supabase, tenantId, propertyId, startStr, endStr)
@@ -211,13 +240,30 @@ export async function executeCheckPropertyAvailability(
   }
 
   // ─── Available — build price estimate and upsert draft ───────────────────────
-  const currency    = property.currency ?? 'ARS'
+  // El precio sale del motor canónico (public.quote_temporary_rental). Acá solo
+  // se arma el texto que lee el cliente: presentación, no aritmética.
+  const quote = await quoteTemporaryRental(supabase, tenantId, propertyId, startStr, endStr)
+
+  if (!quote.ok) {
+    // No es el caso "sin precio" —ese vuelve ok:true con importes null— sino una
+    // falla real del motor. Cotizar mal es peor que no cotizar: se corta acá y
+    // no se escribe draft, así create_pending_reservation no puede reutilizar
+    // una cotización que nunca existió.
+    console.error('[reservation:availability:quote-failed]', {
+      conversationId, propertyId, tenantId, reason: quote.reason,
+    })
+    return JSON.stringify({
+      error: 'No se pudo calcular el precio para esas fechas. Decile al cliente que aguarde un momento y volvé a intentar.',
+    })
+  }
+
+  const currency    = quote.currency
   const fmt         = (n: number) => Math.round(n).toLocaleString('es-AR')
   const result: Record<string, unknown> = {
     available:    true,
     property_id:  property.id,
     title:        property.title,
-    nights_count: nightsCount,
+    nights_count: quote.nights,
     start_date:   startStr,
     end_date:     endStr,
     currency,
@@ -227,52 +273,23 @@ export async function executeCheckPropertyAvailability(
   if (property.check_in_time)  result['check_in_time']  = String(property.check_in_time).slice(0, 5)
   if (property.check_out_time) result['check_out_time'] = String(property.check_out_time).slice(0, 5)
 
-  let draftNightly:  number | null = null
-  let draftSubtotal: number | null = null
-  let draftFees                    = 0
-  let draftTotal:    number | null = null
-  let draftDeposit:  number | null = null
-  const draftBreakdown: { [key: string]: number | string | null | boolean } = {}
-
-  if (property.pricing_mode === 'fixed' && property.base_price_per_night) {
-    const nightly     = property.base_price_per_night
-    const subtotal    = nightly * nightsCount
-    const cleaningFee = property.cleaning_fee ?? 0
-    const total       = subtotal + cleaningFee
-
-    let depositAmount: number | null = null
-    if (property.temporary_deposit_amount) {
-      depositAmount = property.temporary_deposit_amount
-    } else if (property.temporary_deposit_percent) {
-      depositAmount = Math.round(total * property.temporary_deposit_percent / 100)
-    }
-
+  // "fixed sin precio cargado" se le comunica al cliente como consult, igual que
+  // antes: el motor devuelve pricing_mode 'fixed' pero nightly_price null.
+  if (quote.pricing_mode === 'fixed' && quote.nightly_price !== null) {
     const lines: string[] = [
-      `${currency} ${fmt(nightly)}/noche × ${nightsCount} noche${nightsCount !== 1 ? 's' : ''} = ${currency} ${fmt(subtotal)}`,
+      `${currency} ${fmt(quote.nightly_price)}/noche × ${quote.nights} noche${quote.nights !== 1 ? 's' : ''} = ${currency} ${fmt(quote.subtotal ?? 0)}`,
     ]
-    if (cleaningFee > 0) lines.push(`Limpieza: ${currency} ${fmt(cleaningFee)}`)
-    lines.push(`Total: ${currency} ${fmt(total)}`)
-    if (depositAmount) lines.push(`Seña requerida: ${currency} ${fmt(depositAmount)}`)
+    if (quote.fees > 0) lines.push(`Limpieza: ${currency} ${fmt(quote.fees)}`)
+    lines.push(`Total: ${currency} ${fmt(quote.total ?? 0)}`)
+    if (quote.deposit) lines.push(`Seña requerida: ${currency} ${fmt(quote.deposit)}`)
 
     result['pricing_mode']     = 'fixed'
-    result['nightly_price']    = nightly
-    result['subtotal']         = subtotal
-    result['cleaning_fee']     = cleaningFee
-    result['total']            = total
-    result['deposit_required'] = depositAmount
+    result['nightly_price']    = quote.nightly_price
+    result['subtotal']         = quote.subtotal
+    result['cleaning_fee']     = quote.fees
+    result['total']            = quote.total
+    result['deposit_required'] = quote.deposit
     result['price_summary']    = lines.join('\n')
-
-    draftNightly  = nightly
-    draftSubtotal = subtotal
-    draftFees     = cleaningFee
-    draftTotal    = total
-    draftDeposit  = depositAmount
-    draftBreakdown['nightly_price'] = nightly
-    draftBreakdown['nights']        = nightsCount
-    draftBreakdown['subtotal']      = subtotal
-    draftBreakdown['cleaning_fee']  = cleaningFee
-    draftBreakdown['total']         = total
-    draftBreakdown['deposit']       = depositAmount
   } else {
     result['pricing_mode']  = 'consult'
     result['price_summary'] = 'Precio a consultar con el asesor al confirmar.'
@@ -292,14 +309,14 @@ export async function executeCheckPropertyAvailability(
       end_date:                endStr,
       guests:                  guests ?? 1,
       price_currency:          currency,
-      pricing_mode:            property.pricing_mode ?? 'consult',
-      nightly_price:           draftNightly,
-      nights_count:            nightsCount,
-      subtotal_amount:         draftSubtotal,
-      fees_amount:             draftFees,
-      total_amount:            draftTotal,
-      deposit_required_amount: draftDeposit,
-      pricing_breakdown:       draftBreakdown,
+      pricing_mode:            quote.pricing_mode,
+      nightly_price:           quote.nightly_price,
+      nights_count:            quote.nights,
+      subtotal_amount:         quote.subtotal,
+      fees_amount:             quote.fees,
+      total_amount:            quote.total,
+      deposit_required_amount: quote.deposit,
+      pricing_breakdown:       quote.breakdown,
       status:                  'quoted',
       expires_at:              draftExpiresAt,
       updated_at:              new Date().toISOString(),

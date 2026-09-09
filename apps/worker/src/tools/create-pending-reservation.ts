@@ -2,6 +2,8 @@ import { createClient } from '../lib/supabase'
 import type { LLMTool } from '../lib/llm'
 import { validateWeekday } from './validate-weekday'
 import { checkPropertyAvailability } from './availability-check.shared'
+import { quoteTemporaryRental } from './pricing.shared'
+import { checkTemporaryRentalEligibility } from './eligibility.shared'
 
 export const createPendingReservationTool: LLMTool = {
   type: 'function',
@@ -187,24 +189,23 @@ export async function executeCreatePendingReservation(
   // ── Step 2: Fetch property ────────────────────────────────────────────────────
   const { data: property } = await supabase
     .from('properties')
-    .select('id, title, commercial_status, operation_type, pricing_mode, currency, capacity, base_price_per_night, minimum_stay_nights, cleaning_fee, temporary_deposit_amount, temporary_deposit_percent')
+    .select('id, title, pricing_mode, currency')
     .eq('tenant_id', tenantId)
     .eq('id', args.property_id)
     .is('deleted_at', null)
+    // Fase 3E-A.1 y 3E-A.2: sin las columnas de precio ni las de reglas
+    // (commercial_status, operation_type, capacity, minimum_stay_nights). Las
+    // leen quote_temporary_rental y check_temporary_rental_eligibility; no
+    // tenerlas acá hace estructuralmente imposible reimplementarlas.
+    //
+    // pricing_mode y currency siguen leyéndose solo como valores por defecto de
+    // la rama que reutiliza un draft, donde no se cotiza de nuevo.
     .maybeSingle() as {
       data: {
-        id:                        string
-        title:                     string
-        commercial_status:         string
-        operation_type:            string
-        pricing_mode:              string
-        currency:                  string
-        capacity:                  number | null
-        base_price_per_night:      number | null
-        minimum_stay_nights:       number
-        cleaning_fee:              number
-        temporary_deposit_amount:  number | null
-        temporary_deposit_percent: number | null
+        id:           string
+        title:        string
+        pricing_mode: string
+        currency:     string
       } | null
     }
 
@@ -212,33 +213,63 @@ export async function executeCreatePendingReservation(
     return JSON.stringify({ error: 'Propiedad no encontrada. Verificá el property_id.' })
   }
 
-  if (property.commercial_status !== 'available') {
-    const statusLabels: Record<string, string> = {
-      rented: 'alquilada', paused: 'pausada temporalmente', sold: 'vendida',
+  // ─── Elegibilidad con las reglas canónicas ──────────────────────────────────
+  // Antes, este archivo verificaba estado comercial, tipo de operación y estadía
+  // mínima, pero leía `capacity` de properties y NUNCA la comparaba: la
+  // capacidad solo se verificaba al cotizar. Si el LLM cotizaba para 4 y creaba
+  // para 9, la reserva entraba igual. Ahora las cuatro reglas las evalúa
+  // public.check_temporary_rental_eligibility, la misma función que usa el resto
+  // de los writers.
+  const elig = await checkTemporaryRentalEligibility(
+    supabase, tenantId, args.property_id, useStart, useEnd, useGuests,
+  )
+
+  if (!elig.eligible) {
+    switch (elig.reason) {
+      case 'property_not_available': {
+        const statusLabels: Record<string, string> = {
+          rented: 'alquilada', paused: 'pausada temporalmente', sold: 'vendida',
+        }
+        const raw   = elig.commercial_status ?? ''
+        const label = statusLabels[raw] ?? raw
+        return JSON.stringify({
+          error: `"${property.title}" no está disponible comercialmente — actualmente está ${label}. No se puede crear una reserva. Ofrecé propiedades alternativas disponibles.`,
+        })
+      }
+      case 'not_temporary_rental': {
+        const label = elig.operation_type === 'sale' ? 'venta' : 'alquiler tradicional'
+        return JSON.stringify({
+          error: `"${property.title}" es de ${label}. No acepta reservas de alquiler temporal.`,
+        })
+      }
+      case 'capacity_exceeded':
+        return JSON.stringify({
+          error:
+            `La capacidad máxima de "${property.title}" es de ${elig.capacity} persona${elig.capacity !== 1 ? 's' : ''} ` +
+            `y la reserva es para ${elig.requested_guests}. ` +
+            `Pedile al cliente que ajuste la cantidad de personas u ofrecé una propiedad más grande.`,
+        })
+      case 'minimum_stay_not_met': {
+        const min = elig.minimum_stay_nights ?? 1
+        return JSON.stringify({
+          error:
+            `La estadía mínima en "${property.title}" es de ${min} noche${min !== 1 ? 's' : ''}. ` +
+            `La solicitud es de ${elig.requested_nights} noche${elig.requested_nights !== 1 ? 's' : ''}. ` +
+            `Pedile al cliente que elija fechas con al menos ${min} noches.`,
+        })
+      }
+      default:
+        console.error('[reservation:create:eligibility-failed]', {
+          conversationId, propertyId: args.property_id, tenantId, reason: elig.reason,
+        })
+        return JSON.stringify({
+          error: 'No se pudo verificar la propiedad. Decile al cliente que aguarde un momento y volvé a intentar.',
+        })
     }
-    const label = statusLabels[property.commercial_status] ?? property.commercial_status
-    return JSON.stringify({
-      error: `"${property.title}" no está disponible comercialmente — actualmente está ${label}. No se puede crear una reserva. Ofrecé propiedades alternativas disponibles.`,
-    })
   }
 
-  if (property.operation_type !== 'temporary_rental') {
-    const label = property.operation_type === 'sale' ? 'venta' : 'alquiler tradicional'
-    return JSON.stringify({
-      error: `"${property.title}" es de ${label}. No acepta reservas de alquiler temporal.`,
-    })
-  }
-
-  const nightsCount = Math.round((endDate.getTime() - startDate.getTime()) / 86400000)
-  const minStay     = property.minimum_stay_nights ?? 1
-  if (nightsCount < minStay) {
-    return JSON.stringify({
-      error:
-        `La estadía mínima en "${property.title}" es de ${minStay} noche${minStay !== 1 ? 's' : ''}. ` +
-        `La solicitud es de ${nightsCount} noche${nightsCount !== 1 ? 's' : ''}. ` +
-        `Pedile al cliente que elija fechas con al menos ${minStay} noches.`,
-    })
-  }
+  // Las mismas noches que usa el motor de pricing: no hay dos cálculos.
+  const nightsCount = elig.nights
 
   // ── Step 3: Availability re-check (shared helper = same logic as check_property_availability) ──
   const avail = await checkPropertyAvailability(supabase, tenantId, args.property_id, useStart, useEnd)
@@ -289,7 +320,9 @@ export async function executeCreatePendingReservation(
   let pricing_breakdown: { [key: string]: number | string | null | boolean } = {}
 
   if (draftValid && draft.pricing_mode === 'fixed') {
-    // Use draft snapshot
+    // Use draft snapshot — el precio que ya se le mostró al cliente y que
+    // aceptó. Esta rama NO cotiza de nuevo a propósito: si el tenant cambió la
+    // tarifa en los últimos 30 minutos, se honra lo cotizado, no lo nuevo.
     nightly_price_snapshot  = draft.nightly_price
     subtotal_amount         = draft.subtotal_amount
     fees_amount             = draft.fees_amount ?? 0
@@ -297,28 +330,26 @@ export async function executeCreatePendingReservation(
     deposit_required_amount = draft.deposit_required_amount
     pricing_mode_snapshot   = draft.pricing_mode
     pricing_breakdown       = (draft.pricing_breakdown as { [key: string]: number | string | null | boolean }) ?? {}
-  } else if (property.pricing_mode === 'fixed' && property.base_price_per_night) {
-    nightly_price_snapshot  = property.base_price_per_night
-    subtotal_amount         = nightly_price_snapshot * nightsCount
-    fees_amount             = property.cleaning_fee ?? 0
-    total_amount            = subtotal_amount + fees_amount
+  } else {
+    // Sin cotización previa vigente: se cotiza ahora con el motor canónico.
+    const quote = await quoteTemporaryRental(supabase, tenantId, args.property_id, useStart, useEnd)
 
-    if (property.temporary_deposit_amount) {
-      deposit_required_amount = property.temporary_deposit_amount
-    } else if (property.temporary_deposit_percent) {
-      deposit_required_amount = Math.round(total_amount * property.temporary_deposit_percent / 100)
+    if (!quote.ok) {
+      console.error('[reservation:create:quote-failed]', {
+        conversationId, propertyId: args.property_id, tenantId, reason: quote.reason,
+      })
+      return JSON.stringify({
+        error: 'No se pudo calcular el precio de la reserva. Decile al cliente que aguarde un momento y volvé a intentar.',
+      })
     }
 
-    pricing_breakdown = {
-      nightly_price: nightly_price_snapshot,
-      nights:        nightsCount,
-      subtotal:      subtotal_amount,
-      cleaning_fee:  fees_amount,
-      total:         total_amount,
-      deposit:       deposit_required_amount,
-      currency,
-      pricing_mode:  pricing_mode_snapshot,
-    }
+    nightly_price_snapshot  = quote.nightly_price
+    subtotal_amount         = quote.subtotal
+    fees_amount             = quote.fees
+    total_amount            = quote.total
+    deposit_required_amount = quote.deposit
+    pricing_mode_snapshot   = quote.pricing_mode
+    pricing_breakdown       = quote.breakdown
   }
 
   // ── Step 6: Insert reservation ────────────────────────────────────────────────
