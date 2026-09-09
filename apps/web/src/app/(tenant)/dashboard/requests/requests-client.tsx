@@ -54,6 +54,20 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
+// Fase 3E-A — solo temporary_rental materializa una reserva al aprobarse.
+// Los demás kinds siguen comportándose como en 3D, y el copy tiene que
+// decir la verdad en cada caso.
+function materializaReserva(op: OperationRequestListItem): boolean {
+  return op.kind === 'reservation_request' && op.intent === 'temporary_rental'
+}
+
+// Sin propiedad asociada no se puede crear la reserva: la RPC devolvería
+// missing_reservation_context. Se detecta antes para no ofrecer un botón que
+// no puede funcionar (§17).
+function faltaContexto(op: OperationRequestListItem): boolean {
+  return materializaReserva(op) && !op.entity_title_snapshot
+}
+
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString('es-AR', {
     day: '2-digit', month: '2-digit', year: 'numeric',
@@ -227,23 +241,36 @@ export function RequestsClient({
 
               {/* ── Acciones: solo si sigue pendiente (§13) ── */}
               {selected.status === 'pending' && canDecide && (
-                <DialogFooter className="gap-2 sm:justify-between">
-                  <Button
-                    variant="outline"
-                    onClick={() => { setRejecting(selected); setNotes('') }}
-                    disabled={pending}
-                  >
-                    <XCircleIcon className="mr-1.5 h-4 w-4" />
-                    Rechazar
-                  </Button>
-                  <Button
-                    onClick={() => { setConfirming(selected); setNotes('') }}
-                    disabled={pending}
-                  >
-                    <CheckCircle2Icon className="mr-1.5 h-4 w-4" />
-                    Aprobar
-                  </Button>
-                </DialogFooter>
+                <>
+                  {/* §17 — sin propiedad no se puede materializar la reserva.
+                      Se avisa y se deshabilita Aprobar en vez de dejar que la
+                      RPC lo rechace después de un click que parecía válido.
+                      Rechazar sigue disponible: es una salida legítima. */}
+                  {faltaContexto(selected) && (
+                    <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      Esta solicitud no tiene una propiedad asociada, así que no se
+                      puede crear la reserva. Asociala primero o rechazala.
+                    </p>
+                  )}
+
+                  <DialogFooter className="gap-2 sm:justify-between">
+                    <Button
+                      variant="outline"
+                      onClick={() => { setRejecting(selected); setNotes('') }}
+                      disabled={pending}
+                    >
+                      <XCircleIcon className="mr-1.5 h-4 w-4" />
+                      Rechazar
+                    </Button>
+                    <Button
+                      onClick={() => { setConfirming(selected); setNotes('') }}
+                      disabled={pending || faltaContexto(selected)}
+                    >
+                      <CheckCircle2Icon className="mr-1.5 h-4 w-4" />
+                      Aprobar
+                    </Button>
+                  </DialogFooter>
+                </>
               )}
 
               {selected.status === 'pending' && !canDecide && (
@@ -262,8 +289,9 @@ export function RequestsClient({
           <DialogHeader>
             <DialogTitle>¿Aprobar esta solicitud?</DialogTitle>
             <DialogDescription>
-              Queda registrado que vos la aprobaste. Todavía no se crea la reserva
-              ni se bloquean fechas.
+              {confirming && materializaReserva(confirming)
+                ? 'Se va a crear una PRE-RESERVA para las fechas solicitadas y esas fechas van a dejar de estar disponibles. Todavía no queda confirmada: falta el paso de confirmación (y el pago, si corresponde).'
+                : 'Queda registrado que vos la aprobaste. Todavía no se crea ninguna operación.'}
             </DialogDescription>
           </DialogHeader>
 

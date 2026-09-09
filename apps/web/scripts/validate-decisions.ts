@@ -91,13 +91,25 @@ async function main() {
     const B = await buildTenant('B')
     ok('Fixture: dos tenants con owner, recepcionista con permiso y recepcionista sin permiso')
 
-    const PAYLOAD = { name: 'Ana Gómez', check_in: '2026-10-15', check_out: '2026-10-20', adults: 2, children: 1 }
+    const PAYLOAD = { name: 'Ana Gómez', message: '¿Sigue disponible la propiedad?' }
 
     // Crea una operación pending por el camino REAL (la RPC de 3C).
+    // Se usa property_inquiry, NO temporary_rental, y a propósito.
+    //
+    // Este validador prueba el MECANISMO de decisión: autorización, roles,
+    // concurrencia, notas, auditoría, aislamiento. Desde la Fase 3E-A una
+    // temporary_rental aprobada además materializa una reserva, y sin
+    // propiedad asociada devuelve missing_reservation_context — con lo cual
+    // estos tests empezaban a fallar por una razón que no tiene nada que ver
+    // con lo que quieren verificar.
+    //
+    // property_inquiry produce kind='inquiry', que NO materializa nada, así
+    // que la decisión queda aislada de la materialización. Esa la cubre
+    // validate:materialization, con su propia propiedad de fixture.
     async function mkPending(tenantId: string, contactId: string): Promise<string> {
       const { data: sub, error } = await admin.from('form_submissions').insert({
         tenant_id: tenantId, reference: generateSubmissionReference(),
-        intent: 'temporary_rental', status: 'submitted', source: 'public_site',
+        intent: 'property_inquiry', status: 'submitted', source: 'public_site',
         payload: PAYLOAD as never, idempotency_key: randomUUID(), contact_id: contactId,
         expires_at: new Date(Date.now() + 86_400_000).toISOString(),
       }).select('id').single()

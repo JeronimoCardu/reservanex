@@ -24,7 +24,7 @@ export async function decideOperationRequestAction(
   operationId: string,
   action: 'confirmed' | 'rejected',
   notes?: string,
-): Promise<ActionResult<{ status: string }>> {
+): Promise<ActionResult<{ status: string; reservationId?: string | null }>> {
   const ctx = await requireTenantContext()
 
   // Impersonación: mismo criterio que las otras 10 actions del CRM
@@ -65,9 +65,13 @@ export async function decideOperationRequestAction(
   // Cada outcome de negocio tiene su mensaje. No se parsea texto de error:
   // la RPC devuelve un código y acá se traduce.
   switch (outcome) {
-    case 'confirmed':
+    case 'confirmed': {
       revalidatePath(REQUESTS_PATH)
-      return { success: true, data: { status: 'confirmed' } }
+      // Fase 3E-A: en temporary_rental esto además creó la pre-reserva.
+      revalidatePath('/dashboard/reservations')
+      const reservationId = (data as { reservation_id?: string } | null)?.reservation_id ?? null
+      return { success: true, data: { status: 'confirmed', reservationId } }
+    }
 
     case 'rejected':
       revalidatePath(REQUESTS_PATH)
@@ -81,6 +85,34 @@ export async function decideOperationRequestAction(
         success: false,
         error: 'Esta solicitud ya fue decidida por otra persona. Actualizá para ver el estado.',
       }
+
+    // ── Fase 3E-A — outcomes de la materialización ────────────────────────
+    // Ninguno decide la solicitud: queda pending para resolverla o rechazarla.
+    case 'availability_conflict': {
+      revalidatePath(REQUESTS_PATH)
+      const fuente = (data as { conflict_source?: string } | null)?.conflict_source
+      const detalle =
+        fuente === 'confirmed'    ? ' Ya hay una reserva confirmada para esas fechas.' :
+        fuente === 'pre_reserved' ? ' Ya hay una pre-reserva vigente para esas fechas.' :
+        fuente === 'block'        ? ' Esas fechas están bloqueadas en la propiedad.' : ''
+      return {
+        success: false,
+        error: `Las fechas solicitadas ya no están disponibles.${detalle} La solicitud sigue pendiente.`,
+      }
+    }
+
+    case 'missing_reservation_context': {
+      const razon = (data as { reason?: string } | null)?.reason
+      return {
+        success: false,
+        error: razon === 'property_not_found'
+          ? 'La propiedad asociada ya no existe. Asociá la solicitud a una propiedad válida antes de aprobarla.'
+          : 'Esta solicitud no tiene una propiedad asociada, así que no se puede crear la reserva. Asociala primero o rechazala.',
+      }
+    }
+
+    case 'invalid_dates':
+      return { success: false, error: 'Las fechas de la solicitud no son válidas. No se creó ninguna reserva.' }
 
     case 'not_found':
       return { success: false, error: 'Solicitud no encontrada.' }

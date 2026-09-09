@@ -18,6 +18,7 @@
     "validate:auth-hook": "tsx scripts/validate-auth-hook.ts",
     "validate:evidence": "tsx scripts/validate-evidence-integrity.ts",
     "validate:decisions": "tsx scripts/validate-decisions.ts",
+    "validate:materialization": "tsx scripts/validate-reservation-materialization.ts",
     "validate:onboarding": "tsx scripts/validate-onboarding.ts",
     "validate:purge-tenant": "tsx scripts/validate-purge-tenant.ts",
     "validate:security": "tsx scripts/validate-security.ts"

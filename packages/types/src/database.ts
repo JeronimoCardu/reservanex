@@ -2262,6 +2262,7 @@ export type Database = {
           pricing_mode_snapshot: string | null
           property_id: string | null
           source: string
+          source_operation_request_id: string | null
           start_date: string
           status: Database["public"]["Enums"]["reservation_status"]
           subtotal_amount: number | null
@@ -2305,6 +2306,7 @@ export type Database = {
           pricing_mode_snapshot?: string | null
           property_id?: string | null
           source?: string
+          source_operation_request_id?: string | null
           start_date: string
           status?: Database["public"]["Enums"]["reservation_status"]
           subtotal_amount?: number | null
@@ -2348,6 +2350,7 @@ export type Database = {
           pricing_mode_snapshot?: string | null
           property_id?: string | null
           source?: string
+          source_operation_request_id?: string | null
           start_date?: string
           status?: Database["public"]["Enums"]["reservation_status"]
           subtotal_amount?: number | null
@@ -2411,6 +2414,13 @@ export type Database = {
             columns: ["property_id"]
             isOneToOne: false
             referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reservations_source_operation_request_id_fkey"
+            columns: ["source_operation_request_id"]
+            isOneToOne: false
+            referencedRelation: "operation_requests"
             referencedColumns: ["id"]
           },
           {
@@ -3539,6 +3549,15 @@ export type Database = {
       refresh_conversation_last_message: {
         Args: { p_conversation_id: string; p_tenant_id: string }
         Returns: undefined
+      }
+      temporary_rental_dates_available: {
+        Args: {
+          p_end: string
+          p_property_id: string
+          p_start: string
+          p_tenant_id: string
+        }
+        Returns: Json
       }
       verify_hook_configured: { Args: never; Returns: boolean }
       void_monthly_rental_payment: {
