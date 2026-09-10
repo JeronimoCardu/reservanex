@@ -2759,6 +2759,7 @@ export type Database = {
           can_assign_conversations: boolean
           can_confirm_reservations: boolean
           can_create_properties: boolean
+          can_manage_inquiries: boolean
           created_at: string
           email: string
           id: string
@@ -2773,6 +2774,7 @@ export type Database = {
           can_assign_conversations?: boolean
           can_confirm_reservations?: boolean
           can_create_properties?: boolean
+          can_manage_inquiries?: boolean
           created_at?: string
           email: string
           id: string
@@ -2787,6 +2789,7 @@ export type Database = {
           can_assign_conversations?: boolean
           can_confirm_reservations?: boolean
           can_create_properties?: boolean
+          can_manage_inquiries?: boolean
           created_at?: string
           email?: string
           id?: string

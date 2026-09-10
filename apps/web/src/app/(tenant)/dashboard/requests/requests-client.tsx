@@ -15,8 +15,11 @@ import { decideOperationRequestAction } from '@/actions/operation-requests'
 import type { OperationRequestListItem, OperationRequestStatus } from '@/lib/repositories/operation-requests.repository'
 import {
   buildSnapshotLines,
+  decisionActions,
   intentTitle,
-  kindLabel,
+  isInquiry,
+  requestTypeLabel,
+  rowHighlights,
   statusLabel,
   statusTone,
 } from '@/lib/operation-requests/presentation'
@@ -46,10 +49,10 @@ const TONE_CLASSES: Record<string, string> = {
   zinc:  'bg-zinc-100 text-zinc-700 border-zinc-200',
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, kind }: { status: string; kind?: string }) {
   return (
     <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${TONE_CLASSES[statusTone(status)]}`}>
-      {statusLabel(status)}
+      {statusLabel(status, kind)}
     </span>
   )
 }
@@ -77,12 +80,14 @@ function formatDateTime(iso: string): string {
 
 export function RequestsClient({
   requests,
-  canDecide,
+  canDecideReservations,
+  canManageInquiries,
   activeFilter,
 }: {
-  requests:     OperationRequestListItem[]
-  canDecide:    boolean
-  activeFilter: OperationRequestStatus | 'all'
+  requests:              OperationRequestListItem[]
+  canDecideReservations: boolean
+  canManageInquiries:    boolean
+  activeFilter:          OperationRequestStatus | 'all'
 }) {
   const router = useRouter()
   const [selected, setSelected] = useState<OperationRequestListItem | null>(null)
@@ -94,11 +99,23 @@ export function RequestsClient({
   const [notes, setNotes] = useState('')
   const [pending, startTransition] = useTransition()
 
+  // Fase 3E-B1 — el permiso se evalúa por solicitud, no una vez para toda la
+  // bandeja: gestionar una consulta no es la misma autoridad que aprobar una
+  // reserva. Es el mismo mapa que aplica la RPC, que sigue siendo la autoridad.
+  function puedeDecidir(op: OperationRequestListItem): boolean {
+    return isInquiry(op.kind) ? canManageInquiries : canDecideReservations
+  }
+
   function decide(op: OperationRequestListItem, action: 'confirmed' | 'rejected', motivo?: string) {
     startTransition(async () => {
       const result = await decideOperationRequestAction(op.id, action, motivo)
       if (result.success) {
-        toast.success(action === 'confirmed' ? 'Solicitud aprobada.' : 'Solicitud rechazada.')
+        const consulta = isInquiry(op.kind)
+        toast.success(
+          action === 'confirmed'
+            ? (consulta ? 'Consulta marcada como gestionada.' : 'Solicitud aprobada.')
+            : (consulta ? 'Consulta descartada.' : 'Solicitud rechazada.'),
+        )
         setSelected(null); setRejecting(null); setConfirming(null); setNotes('')
         router.refresh()
       } else {
@@ -148,10 +165,10 @@ export function RequestsClient({
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="font-medium">{kindLabel(op.kind)}</div>
+                    <div className="font-medium">{requestTypeLabel(op.kind, op.intent)}</div>
                     <div className="text-sm text-muted-foreground">{intentTitle(op.intent)}</div>
                   </div>
-                  <StatusBadge status={op.status} />
+                  <StatusBadge status={op.status} kind={op.kind} />
                 </div>
 
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
@@ -170,6 +187,22 @@ export function RequestsClient({
                     {formatDateTime(op.created_at)}
                   </span>
                 </div>
+
+                {/* Fase 3E-B1 — datos del formulario que valen la pena sin abrir
+                    el detalle. Las etiquetas y el formato salen de la
+                    FormDefinition, no están escritos acá. */}
+                {rowHighlights(op.intent, op.payload_snapshot).length > 0 && (
+                  <div className="flex flex-wrap gap-2 pt-0.5">
+                    {rowHighlights(op.intent, op.payload_snapshot).map((l) => (
+                      <span
+                        key={l.label}
+                        className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700"
+                      >
+                        {l.label}: <span className="font-medium">{l.value}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </button>
             ))}
           </div>
@@ -183,8 +216,8 @@ export function RequestsClient({
             <>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
-                  {kindLabel(selected.kind)}
-                  <StatusBadge status={selected.status} />
+                  {requestTypeLabel(selected.kind, selected.intent)}
+                  <StatusBadge status={selected.status} kind={selected.kind} />
                 </DialogTitle>
                 <DialogDescription>{intentTitle(selected.intent)}</DialogDescription>
               </DialogHeader>
@@ -222,7 +255,7 @@ export function RequestsClient({
                 {/* ── Ya decidida (§13) ── */}
                 {selected.status !== 'pending' && (
                   <div className="rounded-lg border bg-zinc-50 p-3 text-sm">
-                    <div className="font-medium">{statusLabel(selected.status)}</div>
+                    <div className="font-medium">{statusLabel(selected.status, selected.kind)}</div>
                     {selected.decided_at && (
                       <div className="text-muted-foreground">
                         {selected.decider?.name ?? selected.decider?.email ?? 'Alguien del equipo'}
@@ -240,7 +273,7 @@ export function RequestsClient({
               </div>
 
               {/* ── Acciones: solo si sigue pendiente (§13) ── */}
-              {selected.status === 'pending' && canDecide && (
+              {selected.status === 'pending' && puedeDecidir(selected) && (
                 <>
                   {/* §17 — sin propiedad no se puede materializar la reserva.
                       Se avisa y se deshabilita Aprobar en vez de dejar que la
@@ -260,22 +293,24 @@ export function RequestsClient({
                       disabled={pending}
                     >
                       <XCircleIcon className="mr-1.5 h-4 w-4" />
-                      Rechazar
+                      {decisionActions(selected.kind).reject}
                     </Button>
                     <Button
                       onClick={() => { setConfirming(selected); setNotes('') }}
                       disabled={pending || faltaContexto(selected)}
                     >
                       <CheckCircle2Icon className="mr-1.5 h-4 w-4" />
-                      Aprobar
+                      {decisionActions(selected.kind).confirm}
                     </Button>
                   </DialogFooter>
                 </>
               )}
 
-              {selected.status === 'pending' && !canDecide && (
+              {selected.status === 'pending' && !puedeDecidir(selected) && (
                 <p className="text-sm text-muted-foreground">
-                  No tenés permiso para decidir solicitudes.
+                  {isInquiry(selected.kind)
+                    ? 'No tenés permiso para gestionar consultas. Pedile a un owner que te habilite “Gestionar consultas”.'
+                    : 'No tenés permiso para decidir solicitudes de reserva.'}
                 </p>
               )}
             </>
@@ -287,16 +322,22 @@ export function RequestsClient({
       <Dialog open={confirming !== null} onOpenChange={(o) => !o && setConfirming(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>¿Aprobar esta solicitud?</DialogTitle>
+            <DialogTitle>
+              {confirming ? decisionActions(confirming.kind).confirmTitle : ''}
+            </DialogTitle>
             <DialogDescription>
               {confirming && materializaReserva(confirming)
                 ? 'Se va a crear una PRE-RESERVA para las fechas solicitadas y esas fechas van a dejar de estar disponibles. Todavía no queda confirmada: falta el paso de confirmación (y el pago, si corresponde).'
-                : 'Queda registrado que vos la aprobaste. Todavía no se crea ninguna operación.'}
+                : confirming
+                  ? decisionActions(confirming.kind).confirmBody
+                  : ''}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-2">
-            <Label htmlFor="approve-notes">Nota (opcional)</Label>
+            <Label htmlFor="approve-notes">
+              {confirming ? decisionActions(confirming.kind).notesLabel : 'Nota (opcional)'}
+            </Label>
             <Textarea
               id="approve-notes"
               value={notes}
@@ -312,7 +353,9 @@ export function RequestsClient({
               Cancelar
             </Button>
             <Button onClick={() => confirming && decide(confirming, 'confirmed', notes)} disabled={pending}>
-              {pending ? 'Aprobando…' : 'Aprobar'}
+              {pending
+                ? 'Guardando…'
+                : confirming ? decisionActions(confirming.kind).confirm : 'Aprobar'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -322,22 +365,26 @@ export function RequestsClient({
       <Dialog open={rejecting !== null} onOpenChange={(o) => !o && setRejecting(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>¿Rechazar esta solicitud?</DialogTitle>
+            <DialogTitle>
+              {rejecting ? decisionActions(rejecting.kind).rejectTitle : ''}
+            </DialogTitle>
             <DialogDescription>
-              Queda registrado que vos la rechazaste. El cliente no recibe un aviso
-              automático todavía.
+              {rejecting ? decisionActions(rejecting.kind).rejectBody : ''}
+              {' '}El cliente no recibe un aviso automático todavía.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-2">
-            <Label htmlFor="reject-notes">Motivo (opcional)</Label>
+            <Label htmlFor="reject-notes">
+              {rejecting ? decisionActions(rejecting.kind).notesLabel : 'Motivo (opcional)'}
+            </Label>
             <Textarea
               id="reject-notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               maxLength={500}
               rows={3}
-              placeholder="Por qué se rechaza"
+              placeholder={rejecting && isInquiry(rejecting.kind) ? 'Por qué se descarta' : 'Por qué se rechaza'}
             />
             <p className="text-xs text-muted-foreground">{notes.length}/500</p>
           </div>
@@ -351,7 +398,9 @@ export function RequestsClient({
               onClick={() => rejecting && decide(rejecting, 'rejected', notes)}
               disabled={pending}
             >
-              {pending ? 'Rechazando…' : 'Rechazar'}
+              {pending
+                ? 'Guardando…'
+                : rejecting ? decisionActions(rejecting.kind).reject : 'Rechazar'}
             </Button>
           </DialogFooter>
         </DialogContent>

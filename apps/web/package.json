@@ -22,7 +22,9 @@
     "validate:onboarding": "tsx scripts/validate-onboarding.ts",
     "validate:purge-tenant": "tsx scripts/validate-purge-tenant.ts",
     "validate:security": "tsx scripts/validate-security.ts",
-    "fixture:manual-eligibility": "tsx scripts/prepare-manual-eligibility-fixture.ts"
+    "validate:inquiries": "tsx scripts/validate-inquiries.ts",
+    "fixture:manual-eligibility": "tsx scripts/prepare-manual-eligibility-fixture.ts",
+    "fixture:inquiries-demo": "tsx scripts/prepare-inquiries-demo-fixture.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

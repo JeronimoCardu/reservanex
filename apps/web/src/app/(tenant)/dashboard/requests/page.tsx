@@ -33,10 +33,12 @@ export default async function RequestsPage({
 
   const requests = await listOperationRequests({ status: filter, limit: 200 })
 
-  // Mismo permiso que usa confirmReservationAction: decidir una solicitud es
-  // la misma clase de autoridad que confirmar una reserva. La RPC lo revalida
-  // igual — esto solo decide si se dibujan los botones.
-  const canDecide = ctx.role === 'owner' || ctx.canConfirmReservations
+  // Fase 3E-B1 — el permiso depende del TIPO de solicitud, no es uno solo para
+  // toda la bandeja: gestionar una consulta no es la misma autoridad que
+  // aprobar una reserva. La RPC lo revalida por kind igual — esto solo decide
+  // qué botones se dibujan.
+  const canDecideReservations = ctx.role === 'owner' || ctx.canConfirmReservations
+  const canManageInquiries    = ctx.role === 'owner' || ctx.canManageInquiries
 
   return (
     <div className="flex h-full flex-col">
@@ -50,7 +52,8 @@ export default async function RequestsPage({
 
       <RequestsClient
         requests={requests}
-        canDecide={canDecide}
+        canDecideReservations={canDecideReservations}
+        canManageInquiries={canManageInquiries}
         activeFilter={filter}
       />
     </div>

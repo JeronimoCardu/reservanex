@@ -22,6 +22,7 @@ type Permissions = {
   can_access_settings: boolean
   can_create_properties: boolean
   can_confirm_reservations: boolean
+  can_manage_inquiries: boolean
 }
 
 const PERMISSION_FIELDS: { key: keyof Permissions; label: string; description: string }[] = [
@@ -45,6 +46,13 @@ const PERMISSION_FIELDS: { key: keyof Permissions; label: string; description: s
     label: 'Confirmar reservas',
     description: 'Puede confirmar y gestionar reservas',
   },
+  // Fase 3E-B1 — permiso propio. Antes, quien tenía 'Confirmar reservas'
+  // también podía gestionar consultas, que es otra cosa.
+  {
+    key: 'can_manage_inquiries',
+    label: 'Gestionar consultas',
+    description: 'Puede gestionar o descartar consultas recibidas',
+  },
 ]
 
 interface ReceptionistPermissionsDialogProps {
@@ -64,6 +72,7 @@ export function ReceptionistPermissionsDialog({
     can_access_settings: false,
     can_create_properties: false,
     can_confirm_reservations: true,
+    can_manage_inquiries: false,
   })
 
   // Sync local state when user changes
@@ -75,6 +84,7 @@ export function ReceptionistPermissionsDialog({
       can_access_settings: user.can_access_settings,
       can_create_properties: user.can_create_properties,
       can_confirm_reservations: user.can_confirm_reservations,
+      can_manage_inquiries: user.can_manage_inquiries,
     })
   }
 

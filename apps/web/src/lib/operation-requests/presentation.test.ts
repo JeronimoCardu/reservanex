@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { formIntentSchema, getFormDefinition, type FormIntent } from '@orderflow/validators'
 import {
   buildSnapshotLines,
+  decisionActions,
   intentTitle,
+  isInquiry,
   kindLabel,
+  requestTypeLabel,
+  rowHighlights,
   statusLabel,
   statusTone,
   KIND_LABELS,
@@ -120,5 +124,125 @@ describe('buildSnapshotLines', () => {
   it('con snapshot vacío o nulo devuelve una lista vacía', () => {
     expect(buildSnapshotLines('property_inquiry', {})).toEqual([])
     expect(buildSnapshotLines('property_inquiry', null)).toEqual([])
+  })
+})
+
+// ── Fase 3E-B1 ───────────────────────────────────────────────────────────────
+// El estado interno es el mismo para todos los kinds (pending/confirmed/
+// rejected, sin migrar el enum). Lo que cambia es el vocabulario visible.
+
+describe('estados por kind (3E-B1)', () => {
+  it('una consulta se gestiona o se descarta, no se aprueba ni se rechaza', () => {
+    expect(statusLabel('pending',   'inquiry')).toBe('Pendiente')
+    expect(statusLabel('confirmed', 'inquiry')).toBe('Gestionada')
+    expect(statusLabel('rejected',  'inquiry')).toBe('Descartada')
+  })
+
+  it('una reserva sigue diciendo Aprobada / Rechazada — no se tocó', () => {
+    expect(statusLabel('pending',   'reservation_request')).toBe('Pendiente')
+    expect(statusLabel('confirmed', 'reservation_request')).toBe('Aprobada')
+    expect(statusLabel('rejected',  'reservation_request')).toBe('Rechazada')
+  })
+
+  it('visit_request queda igual que antes: su label se decide en 3E-B2', () => {
+    expect(statusLabel('confirmed', 'visit_request')).toBe('Aprobada')
+    expect(statusLabel('rejected',  'visit_request')).toBe('Rechazada')
+  })
+
+  it('sin kind usa el vocabulario genérico, como el filtro de la bandeja', () => {
+    expect(statusLabel('confirmed')).toBe('Aprobada')
+  })
+
+  it('un kind desconocido no rompe: cae al vocabulario genérico', () => {
+    expect(statusLabel('confirmed', 'algo_raro')).toBe('Aprobada')
+    expect(statusLabel('vaya_estado', 'inquiry')).toBe('vaya_estado')
+  })
+})
+
+describe('acciones por kind (3E-B1)', () => {
+  it('para una consulta los verbos son gestionar y descartar', () => {
+    const a = decisionActions('inquiry')
+    expect(a.confirm).toBe('Marcar como gestionada')
+    expect(a.reject).toBe('Descartar')
+    // El copy tiene que decir la verdad: una consulta gestionada no crea nada.
+    expect(a.confirmBody).toContain('No se crea ninguna reserva')
+  })
+
+  it('para una reserva los verbos siguen siendo aprobar y rechazar', () => {
+    expect(decisionActions('reservation_request').confirm).toBe('Aprobar')
+    expect(decisionActions('reservation_request').reject).toBe('Rechazar')
+  })
+
+  it('un kind sin override cae al vocabulario de reservas', () => {
+    expect(decisionActions('visit_request').confirm).toBe('Aprobar')
+    expect(decisionActions('cualquiera').confirm).toBe('Aprobar')
+  })
+
+  it('isInquiry distingue solo las consultas', () => {
+    expect(isInquiry('inquiry')).toBe(true)
+    expect(isInquiry('reservation_request')).toBe(false)
+    expect(isInquiry('visit_request')).toBe(false)
+  })
+})
+
+describe('tipo de solicitud por intent (3E-B1)', () => {
+  it('distingue las dos consultas inmobiliarias, que comparten kind', () => {
+    expect(requestTypeLabel('inquiry', 'property_inquiry')).toBe('Consulta por propiedad')
+    expect(requestTypeLabel('inquiry', 'monthly_rental_inquiry')).toBe('Consulta alquiler mensual')
+  })
+
+  it('los kinds que no son consulta conservan su label de kind', () => {
+    expect(requestTypeLabel('reservation_request', 'temporary_rental')).toBe('Solicitud de reserva')
+    expect(requestTypeLabel('visit_request', 'property_visit')).toBe('Solicitud de visita')
+  })
+
+  it('una consulta con intent inesperado cae al label del kind', () => {
+    expect(requestTypeLabel('inquiry', 'lo_que_sea')).toBe('Consulta')
+  })
+})
+
+describe('datos destacados en la fila (3E-B1)', () => {
+  it('el alquiler mensual destaca mudanza y ocupantes, con labels del formulario', () => {
+    const lines = rowHighlights('monthly_rental_inquiry', {
+      name: 'Ana', move_in_date: '2027-03-01', occupants: 3, notes: 'con garantía',
+    })
+    expect(lines).toEqual([
+      { label: 'Fecha estimada de mudanza', value: '01/03/2027' },
+      { label: '¿Cuántas personas vivirían?', value: '3' },
+    ])
+  })
+
+  it('omite los opcionales que el cliente no completó', () => {
+    expect(rowHighlights('monthly_rental_inquiry', { name: 'Ana' })).toEqual([])
+  })
+
+  it('property_inquiry no destaca nada: su único dato es el mensaje, y va al detalle', () => {
+    expect(rowHighlights('property_inquiry', { name: 'Ana', message: 'hola' })).toEqual([])
+  })
+
+  it('no destaca nada para los intents que no lo declaran', () => {
+    expect(rowHighlights('temporary_rental', { check_in: '2027-01-01' })).toEqual([])
+  })
+})
+
+describe('detalle de las consultas (3E-B1 §5)', () => {
+  it('property_inquiry muestra nombre y consulta con labels humanos', () => {
+    expect(buildSnapshotLines('property_inquiry', {
+      name: 'Ana Pérez', message: '¿Acepta mascotas?',
+    })).toEqual([
+      { label: 'Tu nombre', value: 'Ana Pérez' },
+      { label: 'Tu consulta', value: '¿Acepta mascotas?' },
+    ])
+  })
+
+  it('monthly_rental_inquiry muestra los cuatro campos en el orden del formulario', () => {
+    expect(buildSnapshotLines('monthly_rental_inquiry', {
+      name: 'Ana Pérez', move_in_date: '2027-03-01', occupants: 3, notes: 'con garantía propietaria',
+    })).toEqual([
+      { label: 'Tu nombre', value: 'Ana Pérez' },
+      { label: 'Fecha estimada de mudanza', value: '01/03/2027' },
+      { label: '¿Cuántas personas vivirían?', value: '3' },
+      { label: 'Observaciones', value: 'con garantía propietaria' },
+    ])
   })
 })

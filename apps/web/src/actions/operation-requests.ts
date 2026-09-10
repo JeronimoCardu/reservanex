@@ -35,10 +35,6 @@ export async function decideOperationRequestAction(
     return { success: false, error: 'No disponible en modo setup.' }
   }
 
-  if (ctx.role !== 'owner' && !ctx.canConfirmReservations) {
-    return { success: false, error: 'No tenés permiso para decidir solicitudes.' }
-  }
-
   if (action !== 'confirmed' && action !== 'rejected') {
     return { success: false, error: 'Acción inválida.' }
   }
@@ -49,6 +45,33 @@ export async function decideOperationRequestAction(
   }
 
   const supabase = await createClient()
+
+  // Fase 3E-B1 — el permiso depende del KIND de la solicitud, así que hay que
+  // saber cuál es antes de poder dar un mensaje temprano. Se lee con la sesión
+  // del usuario (las RLS lo acotan a su tenant), y es solo para UX: si esta
+  // lectura falla se sigue igual y la RPC —que revalida por kind con la fila
+  // lockeada— decide. Nunca al revés.
+  const { data: op } = await supabase
+    .from('operation_requests')
+    .select('kind')
+    .eq('id', operationId)
+    .maybeSingle()
+
+  if (op) {
+    const permitido = op.kind === 'inquiry'
+      ? (ctx.role === 'owner' || ctx.canManageInquiries)
+      : (ctx.role === 'owner' || ctx.canConfirmReservations)
+
+    if (!permitido) {
+      return {
+        success: false,
+        error: op.kind === 'inquiry'
+          ? 'No tenés permiso para gestionar consultas.'
+          : 'No tenés permiso para decidir solicitudes de reserva.',
+      }
+    }
+  }
+
   const { data, error } = await supabase.rpc('decide_operation_request', {
     p_operation_id: operationId,
     p_action:       action,
@@ -181,8 +204,17 @@ export async function decideOperationRequestAction(
     case 'not_found':
       return { success: false, error: 'Solicitud no encontrada.' }
 
-    case 'forbidden':
-      return { success: false, error: 'No tenés permiso para decidir solicitudes.' }
+    // La RPC deniega por kind (Fase 3E-B1) y dice qué permiso falta. Se usa ese
+    // dato en vez de repetir el mapa acá.
+    case 'forbidden': {
+      const falta = (data as { required_permission?: string } | null)?.required_permission
+      return {
+        success: false,
+        error: falta === 'can_manage_inquiries'
+          ? 'No tenés permiso para gestionar consultas.'
+          : 'No tenés permiso para decidir solicitudes de reserva.',
+      }
+    }
 
     case 'platform_user_not_allowed':
       return { success: false, error: 'No disponible en modo setup.' }

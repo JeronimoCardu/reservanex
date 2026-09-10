@@ -69,7 +69,14 @@ async function main() {
         authUserIds.push(au.user.id)
         const { error: tu } = await admin.from('tenant_users').insert({
           id: au.user.id, tenant_id: t!.id, name: `${kind} ${label}`, email, role,
-          active: true, can_confirm_reservations: canConfirm,
+          active: true,
+          // Fase 3E-B1 — la autorización es por kind. Este validador prueba el
+          // MECANISMO con property_inquiry (kind = inquiry), así que el permiso
+          // que corresponde es can_manage_inquiries. Se setean los dos al mismo
+          // valor para conservar el significado original de la fixture:
+          // 'recepcionista con permiso' vs 'sin permiso'.
+          can_confirm_reservations: canConfirm,
+          can_manage_inquiries:     canConfirm,
         })
         if (tu) throw new Error(`tenant_users: ${tu.message}`)
         return { id: au.user.id, email, password }
