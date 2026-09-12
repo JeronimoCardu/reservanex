@@ -393,6 +393,8 @@ export type ReceptionistPermissions = {
   // Fase 3E-B1 — gestionar consultas es su propio permiso, no un efecto
   // secundario de can_confirm_reservations.
   can_manage_inquiries:     boolean
+  // Fase 3E-B2 — agendar y gestionar visitas es su propio permiso.
+  can_manage_visits:        boolean
 }
 
 export async function updateReceptionistPermissions(

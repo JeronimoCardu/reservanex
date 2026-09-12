@@ -16,6 +16,7 @@ export type TenantContext = {
   canCreateProperties:     boolean
   canConfirmReservations:  boolean
   canManageInquiries:      boolean
+  canManageVisits:         boolean
   accessMode:              AccessMode
 }
 
@@ -129,6 +130,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
         canCreateProperties:     true,
         canConfirmReservations:  false,
         canManageInquiries:      false,
+        canManageVisits:         false,
         accessMode:              'setup_operator',
       }
     }
@@ -146,6 +148,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
       canCreateProperties:     true,
       canConfirmReservations:  false,
       canManageInquiries:      false,
+      canManageVisits:         false,
       accessMode:              'setup_operator',
     }
   }
@@ -168,6 +171,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
       canCreateProperties:     true,
       canConfirmReservations:  true,
       canManageInquiries:      true,
+      canManageVisits:         true,
       accessMode:              'tenant_user',
     }
   }
@@ -175,7 +179,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
   // Receptionists: fetch granular permissions from DB.
   const { data: perms, error: permsErr } = await supabase
     .from('tenant_users')
-    .select('can_access_settings, can_assign_conversations, can_create_properties, can_confirm_reservations, can_manage_inquiries')
+    .select('can_access_settings, can_assign_conversations, can_create_properties, can_confirm_reservations, can_manage_inquiries, can_manage_visits')
     .eq('id', user.id)
     .eq('tenant_id', claims.tenant_id)
     .maybeSingle()
@@ -194,6 +198,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
     canCreateProperties:     perms?.can_create_properties     ?? false,
     canConfirmReservations:  perms?.can_confirm_reservations  ?? false,
     canManageInquiries:      perms?.can_manage_inquiries      ?? false,
+    canManageVisits:         perms?.can_manage_visits         ?? false,
     accessMode:              'tenant_user',
   }
 }

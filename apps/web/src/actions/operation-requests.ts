@@ -24,7 +24,11 @@ export async function decideOperationRequestAction(
   operationId: string,
   action: 'confirmed' | 'rejected',
   notes?: string,
-): Promise<ActionResult<{ status: string; reservationId?: string | null }>> {
+  // Fase 3E-B2 — solo para agendar una visita. La RPC rechaza estos parámetros
+  // (invalid_parameters) si el kind no es visit_request o si no se está
+  // confirmando, así que no pueden filtrarse a otro tipo de solicitud.
+  schedule?: { date: string; time: string },
+): Promise<ActionResult<{ status: string; reservationId?: string | null; visitId?: string | null }>> {
   const ctx = await requireTenantContext()
 
   // Impersonación: mismo criterio que las otras 10 actions del CRM
@@ -58,17 +62,26 @@ export async function decideOperationRequestAction(
     .maybeSingle()
 
   if (op) {
-    const permitido = op.kind === 'inquiry'
-      ? (ctx.role === 'owner' || ctx.canManageInquiries)
-      : (ctx.role === 'owner' || ctx.canConfirmReservations)
+    // Mismo mapa por kind que aplica la RPC (Fase 3E-B2 §19).
+    const permitido =
+      ctx.role === 'owner' ? true :
+      op.kind === 'inquiry'       ? ctx.canManageInquiries :
+      op.kind === 'visit_request' ? ctx.canManageVisits :
+                                    ctx.canConfirmReservations
 
     if (!permitido) {
       return {
         success: false,
-        error: op.kind === 'inquiry'
-          ? 'No tenés permiso para gestionar consultas.'
-          : 'No tenés permiso para decidir solicitudes de reserva.',
+        error: op.kind === 'inquiry'       ? 'No tenés permiso para gestionar consultas.'
+             : op.kind === 'visit_request' ? 'No tenés permiso para gestionar visitas.'
+             :                               'No tenés permiso para decidir solicitudes de reserva.',
       }
+    }
+
+    // Agendar exige fecha y hora: sin ellas la RPC devolvería
+    // visit_schedule_required, pero avisar antes es más claro.
+    if (op.kind === 'visit_request' && action === 'confirmed' && !schedule) {
+      return { success: false, error: 'Para agendar la visita hay que elegir fecha y hora.' }
     }
   }
 
@@ -76,6 +89,7 @@ export async function decideOperationRequestAction(
     p_operation_id: operationId,
     p_action:       action,
     p_notes:        trimmed === '' ? undefined : trimmed,
+    ...(schedule ? { p_scheduled_date: schedule.date, p_scheduled_time: schedule.time } : {}),
   })
 
   if (error) {
@@ -92,8 +106,13 @@ export async function decideOperationRequestAction(
       revalidatePath(REQUESTS_PATH)
       // Fase 3E-A: en temporary_rental esto además creó la pre-reserva.
       revalidatePath('/dashboard/reservations')
-      const reservationId = (data as { reservation_id?: string } | null)?.reservation_id ?? null
-      return { success: true, data: { status: 'confirmed', reservationId } }
+      // Fase 3E-B2: en visit_request creó la visita agendada.
+      revalidatePath('/dashboard/visits')
+      const d = data as { reservation_id?: string; visit_id?: string } | null
+      return {
+        success: true,
+        data: { status: 'confirmed', reservationId: d?.reservation_id ?? null, visitId: d?.visit_id ?? null },
+      }
     }
 
     case 'rejected':
@@ -198,6 +217,41 @@ export async function decideOperationRequestAction(
       }
     }
 
+    // ── Fase 3E-B2 — outcomes de agendar una visita ────────────────────────
+    // Ninguno decide la solicitud: queda pending para agendarla bien o
+    // descartarla.
+    case 'missing_visit_context': {
+      const razon = (data as { reason?: string } | null)?.reason
+      return {
+        success: false,
+        error: razon === 'property_not_found'
+          ? 'La propiedad asociada ya no existe. No se agendó ninguna visita.'
+          : 'Esta solicitud no tiene una propiedad asociada, así que no se puede agendar la visita.',
+      }
+    }
+
+    case 'visit_schedule_required':
+      return { success: false, error: 'Para agendar la visita hay que elegir fecha y hora.' }
+
+    case 'scheduled_time_in_past':
+      return {
+        success: false,
+        error: 'Esa fecha y hora ya pasaron. Elegí un momento futuro. La solicitud sigue pendiente.',
+      }
+
+    case 'invalid_schedule': {
+      const razon = (data as { reason?: string } | null)?.reason
+      return {
+        success: false,
+        error: razon === 'invalid_tenant_timezone' || razon === 'tenant_without_timezone'
+          ? 'La organización no tiene una zona horaria válida configurada. Revisala en Configuración antes de agendar.'
+          : 'La fecha y la hora no son válidas.',
+      }
+    }
+
+    case 'invalid_parameters':
+      return { success: false, error: 'Los datos enviados no corresponden a este tipo de solicitud.' }
+
     case 'invalid_dates':
       return { success: false, error: 'Las fechas de la solicitud no son válidas. No se creó ninguna reserva.' }
 
@@ -210,9 +264,9 @@ export async function decideOperationRequestAction(
       const falta = (data as { required_permission?: string } | null)?.required_permission
       return {
         success: false,
-        error: falta === 'can_manage_inquiries'
-          ? 'No tenés permiso para gestionar consultas.'
-          : 'No tenés permiso para decidir solicitudes de reserva.',
+        error: falta === 'can_manage_inquiries' ? 'No tenés permiso para gestionar consultas.'
+             : falta === 'can_manage_visits'    ? 'No tenés permiso para gestionar visitas.'
+             :                                    'No tenés permiso para decidir solicitudes de reserva.',
       }
     }
 

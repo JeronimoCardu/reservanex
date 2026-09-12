@@ -23,6 +23,7 @@ type Permissions = {
   can_create_properties: boolean
   can_confirm_reservations: boolean
   can_manage_inquiries: boolean
+  can_manage_visits: boolean
 }
 
 const PERMISSION_FIELDS: { key: keyof Permissions; label: string; description: string }[] = [
@@ -53,6 +54,12 @@ const PERMISSION_FIELDS: { key: keyof Permissions; label: string; description: s
     label: 'Gestionar consultas',
     description: 'Puede gestionar o descartar consultas recibidas',
   },
+  // Fase 3E-B2 — antes, 'Confirmar reservas' habilitaba visitas por herencia.
+  {
+    key: 'can_manage_visits',
+    label: 'Gestionar visitas',
+    description: 'Puede agendar, reagendar, completar o cancelar visitas',
+  },
 ]
 
 interface ReceptionistPermissionsDialogProps {
@@ -73,6 +80,7 @@ export function ReceptionistPermissionsDialog({
     can_create_properties: false,
     can_confirm_reservations: true,
     can_manage_inquiries: false,
+    can_manage_visits: false,
   })
 
   // Sync local state when user changes
@@ -85,6 +93,7 @@ export function ReceptionistPermissionsDialog({
       can_create_properties: user.can_create_properties,
       can_confirm_reservations: user.can_confirm_reservations,
       can_manage_inquiries: user.can_manage_inquiries,
+      can_manage_visits: user.can_manage_visits,
     })
   }
 

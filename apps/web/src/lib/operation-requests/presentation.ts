@@ -56,9 +56,14 @@ const STATUS_LABELS_BY_KIND: Partial<
     confirmed: 'Gestionada',
     rejected:  'Descartada',
   },
-  // visit_request queda deliberadamente sin override: su label depende de si
-  // una visita aprobada se materializa como visita agendada, y eso se decide en
-  // 3E-B2. Hasta entonces muestra "Aprobada", igual que antes de esta fase.
+  // Fase 3E-B2 — una solicitud de visita aprobada NO queda "aprobada": queda
+  // AGENDADA, porque aprobarla significa fijar fecha y hora concretas y crear
+  // la property_visit. Y descartada, no rechazada: no se rechaza a una persona
+  // que quiere ver una propiedad, se descarta la solicitud.
+  visit_request: {
+    confirmed: 'Agendada',
+    rejected:  'Descartada',
+  },
 }
 
 // Los verbos de los botones, por kind. Mismo criterio: el estado interno no
@@ -87,6 +92,17 @@ const DECISION_ACTIONS_DEFAULT: DecisionActions = {
 }
 
 const DECISION_ACTIONS_BY_KIND: Partial<Record<OperationKind, DecisionActions>> = {
+  // Fase 3E-B2 — "Aprobar" ya no alcanza: aprobar una visita es elegir cuándo.
+  // El diálogo pide fecha y hora concretas antes de confirmar.
+  visit_request: {
+    confirm:      'Agendar visita',
+    reject:       'Descartar',
+    confirmTitle: 'Agendar la visita',
+    rejectTitle:  'Descartar la solicitud de visita',
+    confirmBody:  'Elegí la fecha y la hora en que la visita va a ocurrir. La preferencia del cliente queda registrada como lo que pidió; esto es lo que se acuerda.',
+    rejectBody:   'La solicitud queda descartada y no se agenda ninguna visita.',
+    notesLabel:   'Nota interna (opcional)',
+  },
   inquiry: {
     confirm:      'Marcar como gestionada',
     reject:       'Descartar',
@@ -105,6 +121,96 @@ export function decisionActions(kind: string): DecisionActions {
 /** true si la solicitud es una consulta: no materializa ninguna entidad. */
 export function isInquiry(kind: string): boolean {
   return kind === 'inquiry'
+}
+
+/** true si aprobar exige elegir fecha y hora concretas (Fase 3E-B2). */
+export function requiresScheduling(kind: string): boolean {
+  return kind === 'visit_request'
+}
+
+/**
+ * Muestra un instante en la zona con la que se agendó.
+ *
+ * Se usa `timeZone` de Intl con el timezone_snapshot de la visita, no el del
+ * navegador: una visita acordada a las 17:30 en Buenos Aires tiene que decir
+ * 17:30 aunque quien mira esté en otro huso.
+ */
+export function formatVisitMoment(iso: string, timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat('es-AR', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+      // 24 h: el usuario tipeó 17:30 en un input type=time, la pantalla tiene
+      // que decir 17:30 y no '05:30 p. m.'.
+      hour12: false,
+      timeZone: timezone,
+    }).format(new Date(iso))
+  } catch {
+    // Una zona inválida no debería llegar acá (la RPC la valida contra
+    // pg_timezone_names), pero mostrar algo es mejor que romper la pantalla.
+    return new Date(iso).toISOString().slice(0, 16).replace('T', ' ')
+  }
+}
+
+/**
+ * Nombre a mostrar para el cliente de una solicitud o una visita.
+ *
+ * El contacto es la fuente preferida —es el dato que el equipo mantiene— pero
+ * puede no tener nombre: un contacto nacido de un WhatsApp entrante solo tiene
+ * teléfono hasta que alguien lo completa. En ese caso se cae al nombre que el
+ * propio cliente escribió en el formulario, que vive en el payload_snapshot de
+ * la solicitud.
+ *
+ * Es SOLO presentación: no copia nada a contacts ni muta evidencia.
+ *
+ * No se asume que todos los intents tengan 'name' —food_order, por ejemplo,
+ * podría no tenerlo— ni que sea un string: se valida el tipo antes de usarlo.
+ */
+export function displayContactName(
+  contactName: string | null | undefined,
+  snapshot?: Record<string, unknown> | null,
+): string {
+  const delContacto = typeof contactName === 'string' ? contactName.trim() : ''
+  if (delContacto !== '') return delContacto
+
+  const crudo = snapshot?.['name']
+  const delFormulario = typeof crudo === 'string' ? crudo.trim() : ''
+  if (delFormulario !== '') return delFormulario
+
+  return 'Sin nombre'
+}
+
+/**
+ * Etiqueta humana de una zona IANA: "America/Argentina/Buenos_Aires" →
+ * "Buenos Aires".
+ *
+ * Se deriva del último segmento del identificador, así que funciona para
+ * cualquier zona sin una tabla de traducciones ni ningún lugar hardcodeado. La
+ * fuente de verdad sigue siendo timezone_snapshot; esto es solo cómo se lee.
+ */
+export function timezoneCityLabel(timezone: string): string {
+  const ultimo = timezone.split('/').pop() ?? timezone
+  return ultimo.replace(/_/g, ' ')
+}
+
+export const VISIT_STATUS_LABELS: Record<string, string> = {
+  scheduled: 'Agendada',
+  completed: 'Realizada',
+  cancelled: 'Cancelada',
+}
+
+export const VISIT_STATUS_TONE: Record<string, 'amber' | 'green' | 'red' | 'zinc'> = {
+  scheduled: 'amber',
+  completed: 'green',
+  cancelled: 'zinc',
+}
+
+export function visitStatusLabel(status: string): string {
+  return VISIT_STATUS_LABELS[status] ?? status
+}
+
+export function visitStatusTone(status: string): 'amber' | 'green' | 'red' | 'zinc' {
+  return VISIT_STATUS_TONE[status] ?? 'zinc'
 }
 
 export const STATUS_TONE: Record<OperationStatus, 'amber' | 'green' | 'red' | 'zinc'> = {
@@ -225,6 +331,9 @@ export function requestTypeLabel(kind: string, intent: string): string {
 // nombre de campo; las etiquetas y el formato salen de la FormDefinition.
 const ROW_HIGHLIGHT_FIELDS: Record<string, readonly string[]> = {
   monthly_rental_inquiry: ['move_in_date', 'occupants'],
+  // Fase 3E-B2 §23 — lo primero que necesita ver quien va a agendar es cuándo
+  // le queda cómodo al cliente.
+  property_visit:         ['preferred_date', 'preferred_time_range'],
 }
 
 /**

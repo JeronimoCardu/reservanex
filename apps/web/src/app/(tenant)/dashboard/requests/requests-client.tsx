@@ -16,14 +16,18 @@ import type { OperationRequestListItem, OperationRequestStatus } from '@/lib/rep
 import {
   buildSnapshotLines,
   decisionActions,
+  displayContactName,
+  formatVisitMoment,
   intentTitle,
   isInquiry,
+  requiresScheduling,
   requestTypeLabel,
   rowHighlights,
   statusLabel,
   statusTone,
 } from '@/lib/operation-requests/presentation'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import {
@@ -82,11 +86,13 @@ export function RequestsClient({
   requests,
   canDecideReservations,
   canManageInquiries,
+  canManageVisits,
   activeFilter,
 }: {
   requests:              OperationRequestListItem[]
   canDecideReservations: boolean
   canManageInquiries:    boolean
+  canManageVisits:       boolean
   activeFilter:          OperationRequestStatus | 'all'
 }) {
   const router = useRouter()
@@ -97,26 +103,41 @@ export function RequestsClient({
   const [rejecting, setRejecting] = useState<OperationRequestListItem | null>(null)
   const [confirming, setConfirming] = useState<OperationRequestListItem | null>(null)
   const [notes, setNotes] = useState('')
+  // Fase 3E-B2 — agendar una visita exige elegir cuándo. La fecha se pre-carga
+  // con la que pidió el cliente; la HORA no se preselecciona a partir de la
+  // franja: "tarde" no es una hora, y elegirla nosotros sería inventar el
+  // acuerdo.
+  const [visitDate, setVisitDate] = useState('')
+  const [visitTime, setVisitTime] = useState('')
   const [pending, startTransition] = useTransition()
 
   // Fase 3E-B1 — el permiso se evalúa por solicitud, no una vez para toda la
   // bandeja: gestionar una consulta no es la misma autoridad que aprobar una
   // reserva. Es el mismo mapa que aplica la RPC, que sigue siendo la autoridad.
   function puedeDecidir(op: OperationRequestListItem): boolean {
-    return isInquiry(op.kind) ? canManageInquiries : canDecideReservations
+    if (isInquiry(op.kind))          return canManageInquiries
+    if (requiresScheduling(op.kind)) return canManageVisits
+    return canDecideReservations
   }
 
   function decide(op: OperationRequestListItem, action: 'confirmed' | 'rejected', motivo?: string) {
     startTransition(async () => {
-      const result = await decideOperationRequestAction(op.id, action, motivo)
+      const schedule = action === 'confirmed' && requiresScheduling(op.kind) && visitDate && visitTime
+        ? { date: visitDate, time: visitTime }
+        : undefined
+      const result = await decideOperationRequestAction(op.id, action, motivo, schedule)
       if (result.success) {
         const consulta = isInquiry(op.kind)
+        const visita   = requiresScheduling(op.kind)
         toast.success(
           action === 'confirmed'
-            ? (consulta ? 'Consulta marcada como gestionada.' : 'Solicitud aprobada.')
-            : (consulta ? 'Consulta descartada.' : 'Solicitud rechazada.'),
+            ? (consulta ? 'Consulta marcada como gestionada.'
+              : visita  ? 'Visita agendada.'
+              :           'Solicitud aprobada.')
+            : (consulta || visita ? 'Solicitud descartada.' : 'Solicitud rechazada.'),
         )
         setSelected(null); setRejecting(null); setConfirming(null); setNotes('')
+        setVisitDate(''); setVisitTime('')
         router.refresh()
       } else {
         toast.error(result.error)
@@ -174,7 +195,9 @@ export function RequestsClient({
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
                   <span className="inline-flex items-center gap-1">
                     <UserIcon className="h-3.5 w-3.5" />
-                    {op.contact?.name ?? op.contact?.phone ?? 'Sin contacto'}
+                    {displayContactName(op.contact?.name, op.payload_snapshot) !== 'Sin nombre'
+                      ? displayContactName(op.contact?.name, op.payload_snapshot)
+                      : (op.contact?.phone ?? 'Sin contacto')}
                   </span>
                   {op.entity_title_snapshot && (
                     <span className="inline-flex items-center gap-1">
@@ -225,7 +248,7 @@ export function RequestsClient({
               <div className="space-y-4">
                 <div className="rounded-lg border bg-zinc-50 p-3 text-sm">
                   <div className="font-medium">
-                    {selected.contact?.name ?? 'Sin nombre'}
+                    {displayContactName(selected.contact?.name, selected.payload_snapshot)}
                   </div>
                   {selected.contact?.phone && (
                     <div className="text-muted-foreground">{selected.contact.phone}</div>
@@ -263,6 +286,11 @@ export function RequestsClient({
                         {formatDateTime(selected.decided_at)}
                       </div>
                     )}
+                    {selected.visit && (
+                      <div className="mt-1 text-muted-foreground">
+                        Agendada para {formatVisitMoment(selected.visit.scheduled_for, selected.visit.timezone_snapshot)}
+                      </div>
+                    )}
                     {selected.decision_notes && (
                       <p className="mt-2 whitespace-pre-wrap text-muted-foreground">
                         {selected.decision_notes}
@@ -296,7 +324,12 @@ export function RequestsClient({
                       {decisionActions(selected.kind).reject}
                     </Button>
                     <Button
-                      onClick={() => { setConfirming(selected); setNotes('') }}
+                      onClick={() => {
+                        setConfirming(selected); setNotes('')
+                        const pref = selected.payload_snapshot?.['preferred_date']
+                        setVisitDate(typeof pref === 'string' ? pref : '')
+                        setVisitTime('')
+                      }}
                       disabled={pending || faltaContexto(selected)}
                     >
                       <CheckCircle2Icon className="mr-1.5 h-4 w-4" />
@@ -334,6 +367,44 @@ export function RequestsClient({
             </DialogDescription>
           </DialogHeader>
 
+          {confirming && requiresScheduling(confirming.kind) && (
+            <div className="space-y-3 rounded-lg border bg-zinc-50 p-3">
+              <div className="text-xs text-muted-foreground">
+                {confirming.entity_title_snapshot ?? 'Sin propiedad'}
+                {rowHighlights(confirming.intent, confirming.payload_snapshot).length > 0
+                  ? ' · pidió ' + rowHighlights(confirming.intent, confirming.payload_snapshot)
+                      .map((l) => l.value).join(', ')
+                  : ''}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="visit-date" className="text-xs">Fecha de la visita *</Label>
+                  <Input
+                    id="visit-date"
+                    type="date"
+                    value={visitDate}
+                    onChange={(e) => setVisitDate(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="visit-time" className="text-xs">Hora *</Label>
+                  <Input
+                    id="visit-time"
+                    type="time"
+                    value={visitTime}
+                    onChange={(e) => setVisitTime(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                La hora se interpreta en la zona horaria de tu organización. No tiene
+                por qué caer dentro de la franja que pidió el cliente.
+              </p>
+            </div>
+          )}
+
           <div className="space-y-2">
             <Label htmlFor="approve-notes">
               {confirming ? decisionActions(confirming.kind).notesLabel : 'Nota (opcional)'}
@@ -352,7 +423,10 @@ export function RequestsClient({
             <Button variant="outline" onClick={() => setConfirming(null)} disabled={pending}>
               Cancelar
             </Button>
-            <Button onClick={() => confirming && decide(confirming, 'confirmed', notes)} disabled={pending}>
+            <Button
+              onClick={() => confirming && decide(confirming, 'confirmed', notes)}
+              disabled={pending || Boolean(confirming && requiresScheduling(confirming.kind) && (!visitDate || !visitTime))}
+            >
               {pending
                 ? 'Guardando…'
                 : confirming ? decisionActions(confirming.kind).confirm : 'Aprobar'}

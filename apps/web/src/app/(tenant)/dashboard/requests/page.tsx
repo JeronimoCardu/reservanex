@@ -39,6 +39,7 @@ export default async function RequestsPage({
   // qué botones se dibujan.
   const canDecideReservations = ctx.role === 'owner' || ctx.canConfirmReservations
   const canManageInquiries    = ctx.role === 'owner' || ctx.canManageInquiries
+  const canManageVisits       = ctx.role === 'owner' || ctx.canManageVisits
 
   return (
     <div className="flex h-full flex-col">
@@ -54,6 +55,7 @@ export default async function RequestsPage({
         requests={requests}
         canDecideReservations={canDecideReservations}
         canManageInquiries={canManageInquiries}
+        canManageVisits={canManageVisits}
         activeFilter={filter}
       />
     </div>

@@ -47,6 +47,16 @@ export interface OperationRequestListItem {
     name:  string | null
     email: string | null
   } | null
+  // Fase 3E-B2 — si la solicitud es una visita ya agendada, la cita que salió
+  // de ella. Se trae por el vínculo real (source_operation_request_id), sin
+  // recalcular ni duplicar nada: la fila de la bandeja puede decir "Agendada
+  // para el 14/11 a las 17:30" sin que el componente sepa de timezones.
+  visit: {
+    id:                string
+    scheduled_for:     string
+    timezone_snapshot: string
+    status:            string
+  } | null
 }
 
 const LIST_COLUMNS = `
@@ -56,7 +66,10 @@ const LIST_COLUMNS = `
   payload_snapshot, customer_confirmed_at, created_at,
   decided_at, decision_notes, decided_by,
   contact:contacts!operation_requests_contact_id_fkey ( id, name, phone ),
-  decider:tenant_users!operation_requests_decided_by_fkey ( id, name, email )
+  decider:tenant_users!operation_requests_decided_by_fkey ( id, name, email ),
+  visit:property_visits!property_visits_source_operation_request_id_fkey (
+    id, scheduled_for, timezone_snapshot, status
+  )
 `
 
 export interface ListOperationRequestsOptions {

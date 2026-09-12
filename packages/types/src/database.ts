@@ -2167,6 +2167,120 @@ export type Database = {
           },
         ]
       }
+      property_visits: {
+        Row: {
+          cancellation_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          completed_at: string | null
+          completed_by: string | null
+          contact_id: string
+          created_at: string
+          id: string
+          property_id: string
+          scheduled_by: string | null
+          scheduled_for: string
+          source_operation_request_id: string
+          status: string
+          tenant_id: string
+          timezone_snapshot: string
+          updated_at: string
+        }
+        Insert: {
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
+          contact_id: string
+          created_at?: string
+          id?: string
+          property_id: string
+          scheduled_by?: string | null
+          scheduled_for: string
+          source_operation_request_id: string
+          status?: string
+          tenant_id: string
+          timezone_snapshot: string
+          updated_at?: string
+        }
+        Update: {
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
+          contact_id?: string
+          created_at?: string
+          id?: string
+          property_id?: string
+          scheduled_by?: string | null
+          scheduled_for?: string
+          source_operation_request_id?: string
+          status?: string
+          tenant_id?: string
+          timezone_snapshot?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_visits_cancelled_by_fkey"
+            columns: ["cancelled_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_visits_completed_by_fkey"
+            columns: ["completed_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_visits_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_visits_property_id_fkey"
+            columns: ["property_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_visits_scheduled_by_fkey"
+            columns: ["scheduled_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_visits_source_operation_request_id_fkey"
+            columns: ["source_operation_request_id"]
+            isOneToOne: true
+            referencedRelation: "operation_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_visits_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_visits_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants_public"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       reservation_events: {
         Row: {
           actor_id: string | null
@@ -2760,6 +2874,7 @@ export type Database = {
           can_confirm_reservations: boolean
           can_create_properties: boolean
           can_manage_inquiries: boolean
+          can_manage_visits: boolean
           created_at: string
           email: string
           id: string
@@ -2775,6 +2890,7 @@ export type Database = {
           can_confirm_reservations?: boolean
           can_create_properties?: boolean
           can_manage_inquiries?: boolean
+          can_manage_visits?: boolean
           created_at?: string
           email: string
           id: string
@@ -2790,6 +2906,7 @@ export type Database = {
           can_confirm_reservations?: boolean
           can_create_properties?: boolean
           can_manage_inquiries?: boolean
+          can_manage_visits?: boolean
           created_at?: string
           email?: string
           id?: string
@@ -3447,6 +3564,10 @@ export type Database = {
       auth_user_role: { Args: never; Returns: string }
       auth_user_type: { Args: never; Returns: string }
       auth_workspace_ids: { Args: never; Returns: string[] }
+      cancel_property_visit: {
+        Args: { p_reason?: string; p_visit_id: string }
+        Returns: Json
+      }
       check_temporary_rental_eligibility: {
         Args: {
           p_end: string
@@ -3517,6 +3638,7 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      complete_property_visit: { Args: { p_visit_id: string }; Returns: Json }
       compute_charge_status_from_payment: {
         Args: {
           p_amount_paid: number
@@ -3536,7 +3658,13 @@ export type Database = {
       }
       custom_access_token_hook: { Args: { event: Json }; Returns: Json }
       decide_operation_request: {
-        Args: { p_action: string; p_notes?: string; p_operation_id: string }
+        Args: {
+          p_action: string
+          p_notes?: string
+          p_operation_id: string
+          p_scheduled_date?: string
+          p_scheduled_time?: string
+        }
         Returns: Json
       }
       is_operator: { Args: never; Returns: boolean }
@@ -3572,6 +3700,18 @@ export type Database = {
         Args: { p_conversation_id: string; p_tenant_id: string }
         Returns: undefined
       }
+      reschedule_property_visit: {
+        Args: {
+          p_scheduled_date: string
+          p_scheduled_time: string
+          p_visit_id: string
+        }
+        Returns: Json
+      }
+      resolve_tenant_local_instant: {
+        Args: { p_date: string; p_tenant_id: string; p_time: string }
+        Returns: Json
+      }
       temporary_rental_dates_available: {
         Args: {
           p_end: string
@@ -3582,6 +3722,7 @@ export type Database = {
         Returns: Json
       }
       verify_hook_configured: { Args: never; Returns: boolean }
+      visit_manager_context: { Args: never; Returns: Json }
       void_monthly_rental_payment: {
         Args: { p_payment_id: string; p_reason?: string }
         Returns: Json

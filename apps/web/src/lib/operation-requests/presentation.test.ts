@@ -3,11 +3,17 @@ import { formIntentSchema, getFormDefinition, type FormIntent } from '@orderflow
 import {
   buildSnapshotLines,
   decisionActions,
+  displayContactName,
+  timezoneCityLabel,
   intentTitle,
   isInquiry,
   kindLabel,
   requestTypeLabel,
+  requiresScheduling,
   rowHighlights,
+  formatVisitMoment,
+  visitStatusLabel,
+  visitStatusTone,
   statusLabel,
   statusTone,
   KIND_LABELS,
@@ -144,9 +150,11 @@ describe('estados por kind (3E-B1)', () => {
     expect(statusLabel('rejected',  'reservation_request')).toBe('Rechazada')
   })
 
-  it('visit_request queda igual que antes: su label se decide en 3E-B2', () => {
-    expect(statusLabel('confirmed', 'visit_request')).toBe('Aprobada')
-    expect(statusLabel('rejected',  'visit_request')).toBe('Rechazada')
+  // Fase 3E-B2 cerró este pendiente: ahora visit_request tiene su propio
+  // vocabulario. Lo que sigue fijo es que las reservas NO cambiaron.
+  it('visit_request ya tiene vocabulario propio desde 3E-B2', () => {
+    expect(statusLabel('confirmed', 'visit_request')).toBe('Agendada')
+    expect(statusLabel('rejected',  'visit_request')).toBe('Descartada')
   })
 
   it('sin kind usa el vocabulario genérico, como el filtro de la bandeja', () => {
@@ -174,7 +182,8 @@ describe('acciones por kind (3E-B1)', () => {
   })
 
   it('un kind sin override cae al vocabulario de reservas', () => {
-    expect(decisionActions('visit_request').confirm).toBe('Aprobar')
+    // visit_request dejó de estar en este grupo en 3E-B2 (tiene el suyo).
+    expect(decisionActions('table_request').confirm).toBe('Aprobar')
     expect(decisionActions('cualquiera').confirm).toBe('Aprobar')
   })
 
@@ -244,5 +253,127 @@ describe('detalle de las consultas (3E-B1 §5)', () => {
       { label: '¿Cuántas personas vivirían?', value: '3' },
       { label: 'Observaciones', value: 'con garantía propietaria' },
     ])
+  })
+})
+
+// ── Fase 3E-B2 ───────────────────────────────────────────────────────────────
+
+describe('estados y acciones de visita (3E-B2)', () => {
+  it('una solicitud de visita aprobada queda Agendada, no Aprobada', () => {
+    expect(statusLabel('pending',   'visit_request')).toBe('Pendiente')
+    expect(statusLabel('confirmed', 'visit_request')).toBe('Agendada')
+    expect(statusLabel('rejected',  'visit_request')).toBe('Descartada')
+  })
+
+  it('no se rompieron los otros dos kinds', () => {
+    expect(statusLabel('confirmed', 'reservation_request')).toBe('Aprobada')
+    expect(statusLabel('rejected',  'reservation_request')).toBe('Rechazada')
+    expect(statusLabel('confirmed', 'inquiry')).toBe('Gestionada')
+    expect(statusLabel('rejected',  'inquiry')).toBe('Descartada')
+  })
+
+  it('los verbos de una visita son agendar y descartar', () => {
+    const a = decisionActions('visit_request')
+    expect(a.confirm).toBe('Agendar visita')
+    expect(a.reject).toBe('Descartar')
+    expect(a.confirmBody).toContain('fecha y la hora')
+  })
+
+  it('requiresScheduling distingue solo las visitas', () => {
+    expect(requiresScheduling('visit_request')).toBe(true)
+    expect(requiresScheduling('reservation_request')).toBe(false)
+    expect(requiresScheduling('inquiry')).toBe(false)
+  })
+
+  it('la fila de una visita destaca el día y la franja preferidos', () => {
+    expect(rowHighlights('property_visit', {
+      name: 'Ana', preferred_date: '2027-04-09', preferred_time_range: 'afternoon',
+    })).toEqual([
+      { label: 'Día preferido', value: '09/04/2027' },
+      // La etiqueta legible del select, no el valor interno.
+      { label: 'Horario preferido', value: 'Tarde (12 a 18)' },
+    ])
+  })
+})
+
+describe('estados de property_visits (3E-B2)', () => {
+  it('traduce el ciclo de vida al idioma del negocio', () => {
+    expect(visitStatusLabel('scheduled')).toBe('Agendada')
+    expect(visitStatusLabel('completed')).toBe('Realizada')
+    expect(visitStatusLabel('cancelled')).toBe('Cancelada')
+  })
+
+  it('no rompe con un estado desconocido', () => {
+    expect(visitStatusLabel('vaya')).toBe('vaya')
+    expect(visitStatusTone('vaya')).toBe('zinc')
+  })
+})
+
+describe('formatVisitMoment (3E-B2)', () => {
+  // 2027-04-09T20:30:00Z son las 17:30 en Buenos Aires y las 14:30 en México.
+  const INSTANTE = '2027-04-09T20:30:00.000Z'
+
+  it('muestra el instante en la zona con la que se agendó, no en la del navegador', () => {
+    expect(formatVisitMoment(INSTANTE, 'America/Argentina/Buenos_Aires')).toContain('17:30')
+    expect(formatVisitMoment(INSTANTE, 'America/Mexico_City')).toContain('14:30')
+  })
+
+  it('una zona inválida no rompe la pantalla', () => {
+    expect(formatVisitMoment(INSTANTE, 'No/Existe')).toContain('2027-04-09')
+  })
+})
+
+// ── Fase 3E-B2 (UI) ──────────────────────────────────────────────────────────
+// Un contacto nacido de un WhatsApp entrante solo tiene teléfono hasta que
+// alguien lo completa, pero el cliente SÍ escribió su nombre en el formulario.
+// La pantalla mostraba "Sin nombre" teniéndolo a mano.
+
+describe('displayContactName (3E-B2 UI)', () => {
+  it('sin nombre en el contacto, usa el que el cliente escribió en el formulario', () => {
+    expect(displayContactName(null, { name: 'Ana Gómez' })).toBe('Ana Gómez')
+  })
+
+  it('el nombre guardado en el contacto tiene prioridad sobre el del formulario', () => {
+    expect(displayContactName('Nombre guardado', { name: 'Ana Gómez' })).toBe('Nombre guardado')
+  })
+
+  it('sin ninguno de los dos, cae a "Sin nombre"', () => {
+    expect(displayContactName(null, { message: 'hola' })).toBe('Sin nombre')
+    expect(displayContactName(undefined, null)).toBe('Sin nombre')
+    expect(displayContactName(null, undefined)).toBe('Sin nombre')
+  })
+
+  it('no muestra un nombre que no sea texto', () => {
+    // Ningún intent debería tener un 'name' numérico, pero el payload es JSONB
+    // y la pantalla no puede confiar en eso.
+    expect(displayContactName(null, { name: 42 })).toBe('Sin nombre')
+    expect(displayContactName(null, { name: null })).toBe('Sin nombre')
+    expect(displayContactName(null, { name: { nested: 'x' } })).toBe('Sin nombre')
+  })
+
+  it('ignora los valores que son solo espacios', () => {
+    expect(displayContactName('   ', { name: 'Ana Gómez' })).toBe('Ana Gómez')
+    expect(displayContactName('   ', { name: '   ' })).toBe('Sin nombre')
+  })
+
+  it('recorta los espacios sobrantes', () => {
+    expect(displayContactName('  Ana  ')).toBe('Ana')
+    expect(displayContactName(null, { name: '  Ana Gómez  ' })).toBe('Ana Gómez')
+  })
+})
+
+describe('timezoneCityLabel (3E-B2 UI)', () => {
+  it('convierte una zona IANA en una ciudad legible', () => {
+    expect(timezoneCityLabel('America/Argentina/Buenos_Aires')).toBe('Buenos Aires')
+    expect(timezoneCityLabel('America/Mexico_City')).toBe('Mexico City')
+    expect(timezoneCityLabel('Europe/Madrid')).toBe('Madrid')
+  })
+
+  it('no rompe con zonas sin barra', () => {
+    expect(timezoneCityLabel('UTC')).toBe('UTC')
+  })
+
+  it('es genérico: no hay ninguna ciudad hardcodeada', () => {
+    expect(timezoneCityLabel('Pacific/Port_Moresby')).toBe('Port Moresby')
   })
 })
