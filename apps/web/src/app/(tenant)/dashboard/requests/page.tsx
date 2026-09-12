@@ -40,6 +40,7 @@ export default async function RequestsPage({
   const canDecideReservations = ctx.role === 'owner' || ctx.canConfirmReservations
   const canManageInquiries    = ctx.role === 'owner' || ctx.canManageInquiries
   const canManageVisits       = ctx.role === 'owner' || ctx.canManageVisits
+  const canManageTables       = ctx.role === 'owner' || ctx.canManageTableReservations
 
   return (
     <div className="flex h-full flex-col">
@@ -56,6 +57,7 @@ export default async function RequestsPage({
         canDecideReservations={canDecideReservations}
         canManageInquiries={canManageInquiries}
         canManageVisits={canManageVisits}
+        canManageTables={canManageTables}
         activeFilter={filter}
       />
     </div>

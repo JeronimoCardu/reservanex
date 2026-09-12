@@ -57,6 +57,16 @@ export interface OperationRequestListItem {
     timezone_snapshot: string
     status:            string
   } | null
+  // Fase 3E-C2 — si la solicitud es una mesa ya confirmada, lo ACORDADO.
+  // Se trae por el vínculo real; la fila puede decir "Reservada para el 20/11
+  // a las 21:00 · 5 personas" sin que el componente sepa de timezones.
+  table_reservation: {
+    id:                string
+    scheduled_for:     string
+    timezone_snapshot: string
+    party_size:        number
+    status:            string
+  } | null
 }
 
 const LIST_COLUMNS = `
@@ -69,6 +79,9 @@ const LIST_COLUMNS = `
   decider:tenant_users!operation_requests_decided_by_fkey ( id, name, email ),
   visit:property_visits!property_visits_source_operation_request_id_fkey (
     id, scheduled_for, timezone_snapshot, status
+  ),
+  table_reservation:table_reservations!table_reservations_source_operation_request_id_fkey (
+    id, scheduled_for, timezone_snapshot, party_size, status
   )
 `
 

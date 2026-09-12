@@ -22,6 +22,7 @@ import {
   isInquiry,
   requiresScheduling,
   requestTypeLabel,
+  requiresTableBooking,
   rowHighlights,
   statusLabel,
   statusTone,
@@ -87,12 +88,14 @@ export function RequestsClient({
   canDecideReservations,
   canManageInquiries,
   canManageVisits,
+  canManageTables,
   activeFilter,
 }: {
   requests:              OperationRequestListItem[]
   canDecideReservations: boolean
   canManageInquiries:    boolean
   canManageVisits:       boolean
+  canManageTables:       boolean
   activeFilter:          OperationRequestStatus | 'all'
 }) {
   const router = useRouter()
@@ -109,35 +112,44 @@ export function RequestsClient({
   // acuerdo.
   const [visitDate, setVisitDate] = useState('')
   const [visitTime, setVisitTime] = useState('')
+  // Fase 3E-C2 — la cantidad ACORDADA. Se precarga con la solicitada, y el
+  // usuario puede cambiarla si acordó otra cosa con el cliente.
+  const [partySize, setPartySize] = useState('')
   const [pending, startTransition] = useTransition()
 
   // Fase 3E-B1 — el permiso se evalúa por solicitud, no una vez para toda la
   // bandeja: gestionar una consulta no es la misma autoridad que aprobar una
   // reserva. Es el mismo mapa que aplica la RPC, que sigue siendo la autoridad.
   function puedeDecidir(op: OperationRequestListItem): boolean {
-    if (isInquiry(op.kind))          return canManageInquiries
-    if (requiresScheduling(op.kind)) return canManageVisits
+    if (isInquiry(op.kind))            return canManageInquiries
+    if (requiresScheduling(op.kind))   return canManageVisits
+    if (requiresTableBooking(op.kind)) return canManageTables
     return canDecideReservations
   }
 
   function decide(op: OperationRequestListItem, action: 'confirmed' | 'rejected', motivo?: string) {
     startTransition(async () => {
-      const schedule = action === 'confirmed' && requiresScheduling(op.kind) && visitDate && visitTime
+      const agenda = action === 'confirmed' && visitDate && visitTime
+      const schedule = agenda && requiresScheduling(op.kind)
         ? { date: visitDate, time: visitTime }
-        : undefined
+        : agenda && requiresTableBooking(op.kind)
+          ? { date: visitDate, time: visitTime, partySize: Number(partySize) || undefined }
+          : undefined
       const result = await decideOperationRequestAction(op.id, action, motivo, schedule)
       if (result.success) {
         const consulta = isInquiry(op.kind)
         const visita   = requiresScheduling(op.kind)
+        const mesa     = requiresTableBooking(op.kind)
         toast.success(
           action === 'confirmed'
             ? (consulta ? 'Consulta marcada como gestionada.'
               : visita  ? 'Visita agendada.'
+              : mesa    ? 'Reserva confirmada.'
               :           'Solicitud aprobada.')
             : (consulta || visita ? 'Solicitud descartada.' : 'Solicitud rechazada.'),
         )
         setSelected(null); setRejecting(null); setConfirming(null); setNotes('')
-        setVisitDate(''); setVisitTime('')
+        setVisitDate(''); setVisitTime(''); setPartySize('')
         router.refresh()
       } else {
         toast.error(result.error)
@@ -291,6 +303,16 @@ export function RequestsClient({
                         Agendada para {formatVisitMoment(selected.visit.scheduled_for, selected.visit.timezone_snapshot)}
                       </div>
                     )}
+                    {selected.table_reservation && (
+                      <div className="mt-1 text-muted-foreground">
+                        Reservada para {formatVisitMoment(
+                          selected.table_reservation.scheduled_for,
+                          selected.table_reservation.timezone_snapshot,
+                        )}
+                        {' · '}{selected.table_reservation.party_size} persona
+                        {selected.table_reservation.party_size !== 1 ? 's' : ''}
+                      </div>
+                    )}
                     {selected.decision_notes && (
                       <p className="mt-2 whitespace-pre-wrap text-muted-foreground">
                         {selected.decision_notes}
@@ -326,9 +348,18 @@ export function RequestsClient({
                     <Button
                       onClick={() => {
                         setConfirming(selected); setNotes('')
-                        const pref = selected.payload_snapshot?.['preferred_date']
-                        setVisitDate(typeof pref === 'string' ? pref : '')
-                        setVisitTime('')
+                        const snap = selected.payload_snapshot ?? {}
+                        if (requiresTableBooking(selected.kind)) {
+                          // La hora SÍ se precarga: el cliente pidió una hora
+                          // concreta, no una franja.
+                          setVisitDate(typeof snap['date'] === 'string' ? snap['date'] : '')
+                          setVisitTime(typeof snap['time'] === 'string' ? String(snap['time']).slice(0, 5) : '')
+                          setPartySize(typeof snap['people'] === 'number' ? String(snap['people']) : '')
+                        } else {
+                          const pref = snap['preferred_date']
+                          setVisitDate(typeof pref === 'string' ? pref : '')
+                          setVisitTime(''); setPartySize('')
+                        }
                       }}
                       disabled={pending || faltaContexto(selected)}
                     >
@@ -367,18 +398,21 @@ export function RequestsClient({
             </DialogDescription>
           </DialogHeader>
 
-          {confirming && requiresScheduling(confirming.kind) && (
+          {confirming && (requiresScheduling(confirming.kind) || requiresTableBooking(confirming.kind)) && (
             <div className="space-y-3 rounded-lg border bg-zinc-50 p-3">
               <div className="text-xs text-muted-foreground">
-                {confirming.entity_title_snapshot ?? 'Sin propiedad'}
-                {rowHighlights(confirming.intent, confirming.payload_snapshot).length > 0
-                  ? ' · pidió ' + rowHighlights(confirming.intent, confirming.payload_snapshot)
-                      .map((l) => l.value).join(', ')
-                  : ''}
+                {requiresTableBooking(confirming.kind)
+                  ? 'El cliente pidió: '
+                  : (confirming.entity_title_snapshot ?? 'Sin propiedad') + ' · pidió '}
+                {rowHighlights(confirming.intent, confirming.payload_snapshot)
+                  .map((l) => l.value).join(', ')}
               </div>
-              <div className="grid grid-cols-2 gap-3">
+
+              <div className={requiresTableBooking(confirming.kind) ? 'grid grid-cols-3 gap-3' : 'grid grid-cols-2 gap-3'}>
                 <div className="space-y-1.5">
-                  <Label htmlFor="visit-date" className="text-xs">Fecha de la visita *</Label>
+                  <Label htmlFor="visit-date" className="text-xs">
+                    {requiresTableBooking(confirming.kind) ? 'Fecha *' : 'Fecha de la visita *'}
+                  </Label>
                   <Input
                     id="visit-date"
                     type="date"
@@ -397,10 +431,26 @@ export function RequestsClient({
                     required
                   />
                 </div>
+                {requiresTableBooking(confirming.kind) && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="party-size" className="text-xs">Personas *</Label>
+                    <Input
+                      id="party-size"
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={partySize}
+                      onChange={(e) => setPartySize(e.target.value)}
+                      required
+                    />
+                  </div>
+                )}
               </div>
+
               <p className="text-xs text-muted-foreground">
-                La hora se interpreta en la zona horaria de tu organización. No tiene
-                por qué caer dentro de la franja que pidió el cliente.
+                {requiresTableBooking(confirming.kind)
+                  ? 'Se interpreta en la zona horaria de tu organización. Si cambiás algo, estás registrando lo finalmente acordado: lo que pidió el cliente queda guardado aparte.'
+                  : 'La hora se interpreta en la zona horaria de tu organización. No tiene por qué caer dentro de la franja que pidió el cliente.'}
               </p>
             </div>
           )}
@@ -425,7 +475,11 @@ export function RequestsClient({
             </Button>
             <Button
               onClick={() => confirming && decide(confirming, 'confirmed', notes)}
-              disabled={pending || Boolean(confirming && requiresScheduling(confirming.kind) && (!visitDate || !visitTime))}
+              disabled={pending || Boolean(
+                confirming && requiresScheduling(confirming.kind) && (!visitDate || !visitTime),
+              ) || Boolean(
+                confirming && requiresTableBooking(confirming.kind) && (!visitDate || !visitTime || !partySize),
+              )}
             >
               {pending
                 ? 'Guardando…'

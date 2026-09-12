@@ -10,7 +10,10 @@ import {
   kindLabel,
   requestTypeLabel,
   requiresScheduling,
+  requiresTableBooking,
   rowHighlights,
+  tableReservationStatusLabel,
+  tableReservationStatusTone,
   formatVisitMoment,
   visitStatusLabel,
   visitStatusTone,
@@ -182,8 +185,10 @@ describe('acciones por kind (3E-B1)', () => {
   })
 
   it('un kind sin override cae al vocabulario de reservas', () => {
-    // visit_request dejó de estar en este grupo en 3E-B2 (tiene el suyo).
-    expect(decisionActions('table_request').confirm).toBe('Aprobar')
+    // visit_request salió de este grupo en 3E-B2 y table_request en 3E-C2.
+    // order_request es el único que queda, y a propósito: los pedidos están
+    // bloqueados hasta que exista catálogo.
+    expect(decisionActions('order_request').confirm).toBe('Aprobar')
     expect(decisionActions('cualquiera').confirm).toBe('Aprobar')
   })
 
@@ -375,5 +380,70 @@ describe('timezoneCityLabel (3E-B2 UI)', () => {
 
   it('es genérico: no hay ninguna ciudad hardcodeada', () => {
     expect(timezoneCityLabel('Pacific/Port_Moresby')).toBe('Port Moresby')
+  })
+})
+
+// ── Fase 3E-C2 ───────────────────────────────────────────────────────────────
+
+describe('estados y acciones de mesa (3E-C2)', () => {
+  it('una solicitud de mesa confirmada queda Reservada, no Aprobada', () => {
+    expect(statusLabel('pending',   'table_request')).toBe('Pendiente')
+    expect(statusLabel('confirmed', 'table_request')).toBe('Reservada')
+    expect(statusLabel('rejected',  'table_request')).toBe('Rechazada')
+  })
+
+  it('no se rompieron los otros kinds', () => {
+    expect(statusLabel('confirmed', 'reservation_request')).toBe('Aprobada')
+    expect(statusLabel('confirmed', 'inquiry')).toBe('Gestionada')
+    expect(statusLabel('confirmed', 'visit_request')).toBe('Agendada')
+  })
+
+  it('order_request queda sin override: los pedidos están bloqueados hasta el catálogo', () => {
+    expect(statusLabel('confirmed', 'order_request')).toBe('Aprobada')
+    expect(decisionActions('order_request').confirm).toBe('Aprobar')
+  })
+
+  it('los verbos de una mesa son confirmar y rechazar', () => {
+    const a = decisionActions('table_request')
+    expect(a.confirm).toBe('Confirmar reserva')
+    expect(a.reject).toBe('Rechazar')
+    expect(a.confirmBody).toContain('finalmente acordado')
+  })
+
+  it('requiresTableBooking distingue solo las mesas', () => {
+    expect(requiresTableBooking('table_request')).toBe(true)
+    expect(requiresTableBooking('visit_request')).toBe(false)
+    expect(requiresTableBooking('order_request')).toBe(false)
+    expect(requiresTableBooking('reservation_request')).toBe(false)
+  })
+
+  it('la fila de una mesa destaca fecha, hora y personas solicitadas', () => {
+    expect(rowHighlights('table_reservation', {
+      name: 'Ana', date: '2027-05-20', time: '20:30', people: 4, notes: 'x',
+    })).toEqual([
+      { label: 'Fecha',               value: '20/05/2027' },
+      { label: 'Hora',                value: '20:30' },
+      { label: 'Cantidad de personas', value: '4' },
+    ])
+  })
+})
+
+describe('estados de table_reservations (3E-C2)', () => {
+  it('traduce el ciclo de vida al idioma del negocio', () => {
+    expect(tableReservationStatusLabel('confirmed')).toBe('Confirmada')
+    expect(tableReservationStatusLabel('completed')).toBe('Realizada')
+    expect(tableReservationStatusLabel('cancelled')).toBe('Cancelada')
+    expect(tableReservationStatusLabel('no_show')).toBe('No asistió')
+  })
+
+  it('la ausencia se distingue visualmente de una cancelación', () => {
+    expect(tableReservationStatusTone('no_show')).toBe('red')
+    expect(tableReservationStatusTone('cancelled')).toBe('zinc')
+    expect(tableReservationStatusTone('completed')).toBe('green')
+  })
+
+  it('no rompe con un estado desconocido', () => {
+    expect(tableReservationStatusLabel('vaya')).toBe('vaya')
+    expect(tableReservationStatusTone('vaya')).toBe('zinc')
   })
 })

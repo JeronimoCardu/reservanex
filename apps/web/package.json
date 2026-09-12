@@ -24,9 +24,11 @@
     "validate:security": "tsx scripts/validate-security.ts",
     "validate:inquiries": "tsx scripts/validate-inquiries.ts",
     "validate:visits": "tsx scripts/validate-visits.ts",
+    "validate:table-reservations": "tsx scripts/validate-table-reservations.ts",
     "fixture:manual-eligibility": "tsx scripts/prepare-manual-eligibility-fixture.ts",
     "fixture:inquiries-demo": "tsx scripts/prepare-inquiries-demo-fixture.ts",
-    "fixture:visits-demo": "tsx scripts/prepare-visits-demo-fixture.ts"
+    "fixture:visits-demo": "tsx scripts/prepare-visits-demo-fixture.ts",
+    "fixture:table-reservations-demo": "tsx scripts/prepare-table-reservations-demo-fixture.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

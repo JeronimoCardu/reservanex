@@ -64,6 +64,14 @@ const STATUS_LABELS_BY_KIND: Partial<
     confirmed: 'Agendada',
     rejected:  'Descartada',
   },
+  // Fase 3E-C2 — una solicitud de mesa confirmada queda RESERVADA: confirmarla
+  // significa fijar fecha, hora y cantidad acordadas y crear la reserva.
+  table_request: {
+    confirmed: 'Reservada',
+  },
+  // order_request queda deliberadamente sin override: los pedidos están
+  // bloqueados hasta que exista catálogo, pricing y carrito, y elegirle
+  // vocabulario ahora sería adelantarse a un dominio que no existe.
 }
 
 // Los verbos de los botones, por kind. Mismo criterio: el estado interno no
@@ -92,6 +100,16 @@ const DECISION_ACTIONS_DEFAULT: DecisionActions = {
 }
 
 const DECISION_ACTIONS_BY_KIND: Partial<Record<OperationKind, DecisionActions>> = {
+  // Fase 3E-C2 — confirmar una mesa es acordar cuándo y para cuántos.
+  table_request: {
+    confirm:      'Confirmar reserva',
+    reject:       'Rechazar',
+    confirmTitle: 'Confirmar la reserva',
+    rejectTitle:  'Rechazar la solicitud de mesa',
+    confirmBody:  'Revisá la fecha, la hora y la cantidad de personas. Si cambiaste algo con el cliente, registrá acá lo finalmente acordado: lo que pidió queda guardado aparte, sin cambios.',
+    rejectBody:   'La solicitud queda rechazada y no se crea ninguna reserva.',
+    notesLabel:   'Nota interna (opcional)',
+  },
   // Fase 3E-B2 — "Aprobar" ya no alcanza: aprobar una visita es elegir cuándo.
   // El diálogo pide fecha y hora concretas antes de confirmar.
   visit_request: {
@@ -126,6 +144,17 @@ export function isInquiry(kind: string): boolean {
 /** true si aprobar exige elegir fecha y hora concretas (Fase 3E-B2). */
 export function requiresScheduling(kind: string): boolean {
   return kind === 'visit_request'
+}
+
+/**
+ * true si confirmar exige acordar fecha, hora y cantidad de personas.
+ *
+ * A diferencia de una visita, acá la HORA viene precargada: el cliente ya pidió
+ * una hora concreta, no una franja. Lo que el usuario puede hacer es cambiarla
+ * si acordó otra cosa con el cliente.
+ */
+export function requiresTableBooking(kind: string): boolean {
+  return kind === 'table_request'
 }
 
 /**
@@ -191,6 +220,28 @@ export function displayContactName(
 export function timezoneCityLabel(timezone: string): string {
   const ultimo = timezone.split('/').pop() ?? timezone
   return ultimo.replace(/_/g, ' ')
+}
+
+export const TABLE_RESERVATION_STATUS_LABELS: Record<string, string> = {
+  confirmed: 'Confirmada',
+  completed: 'Realizada',
+  cancelled: 'Cancelada',
+  no_show:   'No asistió',
+}
+
+export const TABLE_RESERVATION_STATUS_TONE: Record<string, 'amber' | 'green' | 'red' | 'zinc'> = {
+  confirmed: 'amber',
+  completed: 'green',
+  cancelled: 'zinc',
+  no_show:   'red',
+}
+
+export function tableReservationStatusLabel(status: string): string {
+  return TABLE_RESERVATION_STATUS_LABELS[status] ?? status
+}
+
+export function tableReservationStatusTone(status: string): 'amber' | 'green' | 'red' | 'zinc' {
+  return TABLE_RESERVATION_STATUS_TONE[status] ?? 'zinc'
 }
 
 export const VISIT_STATUS_LABELS: Record<string, string> = {
@@ -331,6 +382,8 @@ export function requestTypeLabel(kind: string, intent: string): string {
 // nombre de campo; las etiquetas y el formato salen de la FormDefinition.
 const ROW_HIGHLIGHT_FIELDS: Record<string, readonly string[]> = {
   monthly_rental_inquiry: ['move_in_date', 'occupants'],
+  // Fase 3E-C2 §19 — lo primero que necesita ver quien confirma una mesa.
+  table_reservation:      ['date', 'time', 'people'],
   // Fase 3E-B2 §23 — lo primero que necesita ver quien va a agendar es cuándo
   // le queda cómodo al cliente.
   property_visit:         ['preferred_date', 'preferred_time_range'],

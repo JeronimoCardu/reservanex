@@ -2612,6 +2612,126 @@ export type Database = {
           },
         ]
       }
+      table_reservations: {
+        Row: {
+          cancellation_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          completed_at: string | null
+          completed_by: string | null
+          confirmed_by: string | null
+          contact_id: string
+          created_at: string
+          id: string
+          no_show_at: string | null
+          no_show_by: string | null
+          party_size: number
+          scheduled_for: string
+          source_operation_request_id: string
+          status: string
+          tenant_id: string
+          timezone_snapshot: string
+          updated_at: string
+        }
+        Insert: {
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
+          confirmed_by?: string | null
+          contact_id: string
+          created_at?: string
+          id?: string
+          no_show_at?: string | null
+          no_show_by?: string | null
+          party_size: number
+          scheduled_for: string
+          source_operation_request_id: string
+          status?: string
+          tenant_id: string
+          timezone_snapshot: string
+          updated_at?: string
+        }
+        Update: {
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
+          confirmed_by?: string | null
+          contact_id?: string
+          created_at?: string
+          id?: string
+          no_show_at?: string | null
+          no_show_by?: string | null
+          party_size?: number
+          scheduled_for?: string
+          source_operation_request_id?: string
+          status?: string
+          tenant_id?: string
+          timezone_snapshot?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "table_reservations_cancelled_by_fkey"
+            columns: ["cancelled_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "table_reservations_completed_by_fkey"
+            columns: ["completed_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "table_reservations_confirmed_by_fkey"
+            columns: ["confirmed_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "table_reservations_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "table_reservations_no_show_by_fkey"
+            columns: ["no_show_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "table_reservations_source_operation_request_id_fkey"
+            columns: ["source_operation_request_id"]
+            isOneToOne: true
+            referencedRelation: "operation_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "table_reservations_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "table_reservations_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants_public"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tasks: {
         Row: {
           assigned_to: string | null
@@ -2874,6 +2994,7 @@ export type Database = {
           can_confirm_reservations: boolean
           can_create_properties: boolean
           can_manage_inquiries: boolean
+          can_manage_table_reservations: boolean
           can_manage_visits: boolean
           created_at: string
           email: string
@@ -2890,6 +3011,7 @@ export type Database = {
           can_confirm_reservations?: boolean
           can_create_properties?: boolean
           can_manage_inquiries?: boolean
+          can_manage_table_reservations?: boolean
           can_manage_visits?: boolean
           created_at?: string
           email: string
@@ -2906,6 +3028,7 @@ export type Database = {
           can_confirm_reservations?: boolean
           can_create_properties?: boolean
           can_manage_inquiries?: boolean
+          can_manage_table_reservations?: boolean
           can_manage_visits?: boolean
           created_at?: string
           email?: string
@@ -3568,6 +3691,10 @@ export type Database = {
         Args: { p_reason?: string; p_visit_id: string }
         Returns: Json
       }
+      cancel_table_reservation: {
+        Args: { p_reason?: string; p_reservation_id: string }
+        Returns: Json
+      }
       check_temporary_rental_eligibility: {
         Args: {
           p_end: string
@@ -3639,6 +3766,10 @@ export type Database = {
         }
       }
       complete_property_visit: { Args: { p_visit_id: string }; Returns: Json }
+      complete_table_reservation: {
+        Args: { p_reservation_id: string }
+        Returns: Json
+      }
       compute_charge_status_from_payment: {
         Args: {
           p_amount_paid: number
@@ -3662,8 +3793,18 @@ export type Database = {
           p_action: string
           p_notes?: string
           p_operation_id: string
+          p_party_size?: number
           p_scheduled_date?: string
           p_scheduled_time?: string
+        }
+        Returns: Json
+      }
+      edit_table_reservation: {
+        Args: {
+          p_party_size?: number
+          p_reservation_id: string
+          p_scheduled_date: string
+          p_scheduled_time: string
         }
         Returns: Json
       }
@@ -3675,6 +3816,10 @@ export type Database = {
       is_seller: { Args: never; Returns: boolean }
       is_super_admin: { Args: never; Returns: boolean }
       is_tenant_user: { Args: never; Returns: boolean }
+      mark_table_reservation_no_show: {
+        Args: { p_reservation_id: string }
+        Returns: Json
+      }
       next_receipt_number: { Args: { p_tenant_id: string }; Returns: string }
       normalize_contact_phone_ar: { Args: { phone: string }; Returns: string }
       quote_temporary_rental: {
@@ -3721,6 +3866,7 @@ export type Database = {
         }
         Returns: Json
       }
+      tenant_actor_context: { Args: { p_permission: string }; Returns: Json }
       verify_hook_configured: { Args: never; Returns: boolean }
       visit_manager_context: { Args: never; Returns: Json }
       void_monthly_rental_payment: {

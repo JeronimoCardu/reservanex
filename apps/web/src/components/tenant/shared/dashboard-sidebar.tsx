@@ -16,6 +16,7 @@ import {
   KeyRoundIcon,
   InboxIcon,
   CalendarClockIcon,
+  UtensilsCrossedIcon,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -30,6 +31,7 @@ const ALL_NAV_ITEMS = [
   { label: 'Propiedades',          href: '/dashboard/properties',       icon: Building2Icon,     ownerOnly: false, setupBlocked: false },
   { label: 'Reservas',             href: '/dashboard/reservations',     icon: CalendarIcon,      ownerOnly: false, setupBlocked: true  },
   { label: 'Visitas',              href: '/dashboard/visits',           icon: CalendarClockIcon, ownerOnly: false, setupBlocked: true  },
+  { label: 'Reservas de mesa',     href: '/dashboard/table-reservations', icon: UtensilsCrossedIcon, ownerOnly: false, setupBlocked: true  },
   { label: 'Alquileres mensuales', href: '/dashboard/monthly-rentals',  icon: KeyRoundIcon,      ownerOnly: false, setupBlocked: true  },
   { label: 'Tareas',               href: '/dashboard/tasks',            icon: CheckSquareIcon,   ownerOnly: false, setupBlocked: true  },
   { label: 'Usuarios',             href: '/dashboard/users',            icon: UsersIcon,         ownerOnly: true,  setupBlocked: false },

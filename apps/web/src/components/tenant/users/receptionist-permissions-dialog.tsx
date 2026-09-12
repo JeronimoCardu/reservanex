@@ -24,6 +24,7 @@ type Permissions = {
   can_confirm_reservations: boolean
   can_manage_inquiries: boolean
   can_manage_visits: boolean
+  can_manage_table_reservations: boolean
 }
 
 const PERMISSION_FIELDS: { key: keyof Permissions; label: string; description: string }[] = [
@@ -60,6 +61,13 @@ const PERMISSION_FIELDS: { key: keyof Permissions; label: string; description: s
     label: 'Gestionar visitas',
     description: 'Puede agendar, reagendar, completar o cancelar visitas',
   },
+  // Fase 3E-C2 — gastronomía. can_confirm_reservations es de alquiler
+  // temporal y no aplica a un restaurante.
+  {
+    key: 'can_manage_table_reservations',
+    label: 'Gestionar reservas de mesa',
+    description: 'Puede confirmar, modificar, completar, cancelar y marcar ausencias',
+  },
 ]
 
 interface ReceptionistPermissionsDialogProps {
@@ -81,6 +89,7 @@ export function ReceptionistPermissionsDialog({
     can_confirm_reservations: true,
     can_manage_inquiries: false,
     can_manage_visits: false,
+    can_manage_table_reservations: false,
   })
 
   // Sync local state when user changes
@@ -94,6 +103,7 @@ export function ReceptionistPermissionsDialog({
       can_confirm_reservations: user.can_confirm_reservations,
       can_manage_inquiries: user.can_manage_inquiries,
       can_manage_visits: user.can_manage_visits,
+      can_manage_table_reservations: user.can_manage_table_reservations,
     })
   }
 

@@ -27,8 +27,13 @@ export async function decideOperationRequestAction(
   // Fase 3E-B2 — solo para agendar una visita. La RPC rechaza estos parámetros
   // (invalid_parameters) si el kind no es visit_request o si no se está
   // confirmando, así que no pueden filtrarse a otro tipo de solicitud.
-  schedule?: { date: string; time: string },
-): Promise<ActionResult<{ status: string; reservationId?: string | null; visitId?: string | null }>> {
+  schedule?: { date: string; time: string; partySize?: number },
+): Promise<ActionResult<{
+  status: string
+  reservationId?: string | null
+  visitId?: string | null
+  tableReservationId?: string | null
+}>> {
   const ctx = await requireTenantContext()
 
   // Impersonación: mismo criterio que las otras 10 actions del CRM
@@ -67,6 +72,7 @@ export async function decideOperationRequestAction(
       ctx.role === 'owner' ? true :
       op.kind === 'inquiry'       ? ctx.canManageInquiries :
       op.kind === 'visit_request' ? ctx.canManageVisits :
+      op.kind === 'table_request' ? ctx.canManageTableReservations :
                                     ctx.canConfirmReservations
 
     if (!permitido) {
@@ -74,14 +80,19 @@ export async function decideOperationRequestAction(
         success: false,
         error: op.kind === 'inquiry'       ? 'No tenés permiso para gestionar consultas.'
              : op.kind === 'visit_request' ? 'No tenés permiso para gestionar visitas.'
+             : op.kind === 'table_request' ? 'No tenés permiso para gestionar reservas de mesa.'
              :                               'No tenés permiso para decidir solicitudes de reserva.',
       }
     }
 
-    // Agendar exige fecha y hora: sin ellas la RPC devolvería
-    // visit_schedule_required, pero avisar antes es más claro.
+    // Agendar/confirmar exige fecha y hora: sin ellas la RPC devolvería
+    // visit_schedule_required o table_schedule_required, pero avisar antes es
+    // más claro.
     if (op.kind === 'visit_request' && action === 'confirmed' && !schedule) {
       return { success: false, error: 'Para agendar la visita hay que elegir fecha y hora.' }
+    }
+    if (op.kind === 'table_request' && action === 'confirmed' && !schedule) {
+      return { success: false, error: 'Para confirmar la reserva hay que elegir fecha y hora.' }
     }
   }
 
@@ -90,6 +101,7 @@ export async function decideOperationRequestAction(
     p_action:       action,
     p_notes:        trimmed === '' ? undefined : trimmed,
     ...(schedule ? { p_scheduled_date: schedule.date, p_scheduled_time: schedule.time } : {}),
+    ...(schedule?.partySize === undefined ? {} : { p_party_size: schedule.partySize }),
   })
 
   if (error) {
@@ -108,10 +120,19 @@ export async function decideOperationRequestAction(
       revalidatePath('/dashboard/reservations')
       // Fase 3E-B2: en visit_request creó la visita agendada.
       revalidatePath('/dashboard/visits')
-      const d = data as { reservation_id?: string; visit_id?: string } | null
+      // Fase 3E-C2: en table_request creó la reserva de mesa.
+      revalidatePath('/dashboard/table-reservations')
+      const d = data as {
+        reservation_id?: string; visit_id?: string; table_reservation_id?: string
+      } | null
       return {
         success: true,
-        data: { status: 'confirmed', reservationId: d?.reservation_id ?? null, visitId: d?.visit_id ?? null },
+        data: {
+          status: 'confirmed',
+          reservationId:      d?.reservation_id ?? null,
+          visitId:            d?.visit_id ?? null,
+          tableReservationId: d?.table_reservation_id ?? null,
+        },
       }
     }
 
@@ -233,6 +254,16 @@ export async function decideOperationRequestAction(
     case 'visit_schedule_required':
       return { success: false, error: 'Para agendar la visita hay que elegir fecha y hora.' }
 
+    // ── Fase 3E-C2 — outcomes de confirmar una reserva de mesa ─────────────
+    case 'table_schedule_required':
+      return { success: false, error: 'Para confirmar la reserva hay que elegir fecha y hora.' }
+
+    case 'invalid_party_size':
+      return {
+        success: false,
+        error: 'La cantidad de personas tiene que estar entre 1 y 50. La solicitud sigue pendiente.',
+      }
+
     case 'scheduled_time_in_past':
       return {
         success: false,
@@ -264,9 +295,10 @@ export async function decideOperationRequestAction(
       const falta = (data as { required_permission?: string } | null)?.required_permission
       return {
         success: false,
-        error: falta === 'can_manage_inquiries' ? 'No tenés permiso para gestionar consultas.'
-             : falta === 'can_manage_visits'    ? 'No tenés permiso para gestionar visitas.'
-             :                                    'No tenés permiso para decidir solicitudes de reserva.',
+        error: falta === 'can_manage_inquiries'          ? 'No tenés permiso para gestionar consultas.'
+             : falta === 'can_manage_visits'             ? 'No tenés permiso para gestionar visitas.'
+             : falta === 'can_manage_table_reservations' ? 'No tenés permiso para gestionar reservas de mesa.'
+             :                                             'No tenés permiso para decidir solicitudes de reserva.',
       }
     }
 
