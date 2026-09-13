@@ -96,12 +96,18 @@ export async function listMenuCategories(tenantId: string): Promise<MenuCategory
 }
 
 /**
- * Los items del tenant. `archived: false` (default) trae los vigentes;
- * `archived: true`, solo los archivados.
+ * Los items del tenant.
+ *
+ *   archived: false   (default) solo los vigentes
+ *   archived: true              solo los archivados
+ *   archived: 'all'             todos, con deleted_at para distinguirlos
+ *
+ * La grilla usa 'all': trae el catálogo completo de una y filtra en memoria, así
+ * cambiar el filtro Estado no dispara una consulta.
  */
 export async function listMenuItems(
   tenantId: string,
-  { archived = false }: { archived?: boolean } = {},
+  { archived = false }: { archived?: boolean | 'all' } = {},
 ): Promise<MenuItem[]> {
   const supabase = await createClient()
   let query = supabase
@@ -109,7 +115,9 @@ export async function listMenuItems(
     .select(ITEM_COLS)
     .eq('tenant_id', tenantId)
 
-  query = archived ? query.not('deleted_at', 'is', null) : query.is('deleted_at', null)
+  if (archived === true)       query = query.not('deleted_at', 'is', null)
+  else if (archived === false) query = query.is('deleted_at', null)
+  // 'all' → sin filtro de deleted_at
 
   const { data, error } = await query
     .order('sort_order', { ascending: true })
@@ -284,6 +292,120 @@ export async function updateMenuItem(
     .eq('tenant_id', tenantId)
 
   if (error) fail(error)
+}
+
+/** Un patch de fila, ya validado por el schema canónico. */
+export interface MenuItemPatch {
+  id:          string
+  category_id: string
+  name:        string
+  description?: string | undefined
+  base_price:  number
+  published:   boolean
+  available:   boolean
+}
+
+export interface MenuItemPatchResult {
+  id:    string
+  ok:    boolean
+  error?: string
+  code?: string | null
+}
+
+/**
+ * Guarda varias filas en una sola llamada.
+ *
+ * Existe para que la grilla no haga un roundtrip por fila editada: con 20 filas
+ * tocadas eso serían 20 requests, y el usuario los ve de a uno. Acá va uno solo.
+ *
+ * NO es atómico entre filas, y es deliberado: hacerlo atómico exigiría una RPC
+ * SQL, y no hay necesidad real — cada fila es independiente de las demás. Si una
+ * falla, las otras se guardan igual y se devuelve el detalle por fila para que la
+ * UI diga CUÁL falló y la deje marcada como pendiente. Fingir un éxito global
+ * sería peor que un éxito parcial explicado.
+ *
+ * Sigue escribiendo con el cliente del USUARIO: la autoridad es RLS, igual que
+ * en todos los writes del catálogo.
+ */
+export async function updateMenuItemsBatch(
+  tenantId: string,
+  patches: readonly MenuItemPatch[],
+): Promise<MenuItemPatchResult[]> {
+  if (patches.length === 0) return []
+
+  const supabase = await createClient()
+
+  // Las categorías actuales, en UNA consulta y no una por fila: solo hacen falta
+  // para saber si el item cambió de categoría y hay que reubicarlo al final.
+  const { data: actuales, error: eRead } = await supabase
+    .from('menu_items')
+    .select('id, category_id')
+    .eq('tenant_id', tenantId)
+    .in('id', patches.map((p) => p.id))
+
+  if (eRead) fail(eRead)
+  const categoriaActual = new Map(
+    ((actuales ?? []) as { id: string; category_id: string }[]).map((r) => [r.id, r.category_id]),
+  )
+
+  // Cachea el "final de la categoría" por destino, para no recalcularlo cuando
+  // varias filas se mueven a la misma.
+  const finalDeCategoria = new Map<string, number>()
+  async function siguienteEn(categoryId: string): Promise<number> {
+    const cacheado = finalDeCategoria.get(categoryId)
+    if (cacheado !== undefined) {
+      finalDeCategoria.set(categoryId, cacheado + 1)
+      return cacheado
+    }
+    const n = await nextItemSortOrder(tenantId, categoryId)
+    finalDeCategoria.set(categoryId, n + 1)
+    return n
+  }
+
+  const resultados: MenuItemPatchResult[] = []
+
+  for (const patch of patches) {
+    const previa = categoriaActual.get(patch.id)
+    if (previa === undefined) {
+      resultados.push({ id: patch.id, ok: false, error: 'Producto no encontrado.', code: null })
+      continue
+    }
+
+    const fila: {
+      category_id: string
+      name:        string
+      description: string | null
+      base_price:  number
+      published:   boolean
+      available:   boolean
+      sort_order?: number
+    } = {
+      category_id: patch.category_id,
+      name:        patch.name,
+      description: patch.description ?? null,
+      base_price:  patch.base_price,
+      published:   patch.published,
+      available:   patch.available,
+    }
+
+    if (patch.category_id !== previa) {
+      fila.sort_order = await siguienteEn(patch.category_id)
+    }
+
+    const { error } = await supabase
+      .from('menu_items')
+      .update(fila)
+      .eq('id', patch.id)
+      .eq('tenant_id', tenantId)
+
+    resultados.push(
+      error
+        ? { id: patch.id, ok: false, error: error.message, code: error.code ?? null }
+        : { id: patch.id, ok: true },
+    )
+  }
+
+  return resultados
 }
 
 export async function setMenuItemFlag(

@@ -86,7 +86,35 @@ export const createMenuItemSchema = z.object({
 
 export const updateMenuItemSchema = createMenuItemSchema
 
+// ── Guardado por lotes (grilla) ───────────────────────────────────────────
+//
+// La grilla del dashboard edita muchas filas a la vez y guarda una sola vez. El
+// patch de una fila es el mismo schema de edición MÁS su id y los dos booleanos
+// operacionales, que en la grilla se togglean en la propia fila en vez de en un
+// diálogo aparte.
+//
+// Se construye con .extend() sobre createMenuItemSchema a propósito: el precio
+// sigue validándose con menuPriceSchema, el ÚNICO parser de precios del
+// producto. Nada de reimplementarlo en el componente.
+export const menuItemRowPatchSchema = createMenuItemSchema.extend({
+  id:        z.string({ required_error: 'Falta el id del producto.' }).uuid('Producto inválido.'),
+  published: z.boolean(),
+  available: z.boolean(),
+})
+
+// El tope de 500 no es una capacidad del producto: es un límite de cordura para
+// el tamaño del request. Una carta real tiene decenas de items, no cientos de
+// filas modificadas de una sola vez.
+export const saveMenuItemsSchema = z.object({
+  changes: z
+    .array(menuItemRowPatchSchema)
+    .min(1, 'No hay cambios para guardar.')
+    .max(500, 'Demasiados cambios en una sola operación.'),
+})
+
 export type CreateMenuCategoryInput = z.infer<typeof createMenuCategorySchema>
 export type UpdateMenuCategoryInput = z.infer<typeof updateMenuCategorySchema>
 export type CreateMenuItemInput     = z.infer<typeof createMenuItemSchema>
 export type UpdateMenuItemInput     = z.infer<typeof updateMenuItemSchema>
+export type MenuItemRowPatch        = z.infer<typeof menuItemRowPatchSchema>
+export type SaveMenuItemsInput      = z.infer<typeof saveMenuItemsSchema>

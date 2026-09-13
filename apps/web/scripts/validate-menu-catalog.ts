@@ -795,17 +795,34 @@ async function main() {
       } else nok('AK. un true explícito no se conservó', JSON.stringify(data))
     }
 
-    // ── AL. D. las filas preexistentes del proyecto no se tocaron ────────────
+    // ── AL. D. la migración no hizo backfill ────────────────────────────────
+    //
+    // Se miran los OWNERS, no las recepcionistas, y la distinción importa:
+    //
+    //   · Los owners preexistentes se crearon antes de 20260917000004 con
+    //     can_confirm_reservations = true (el default viejo) y NO son editables
+    //     desde el diálogo de permisos —updateReceptionistPermissionsAction
+    //     rechaza a quien no sea receptionist—. O sea que su valor solo pudo
+    //     haber cambiado por un backfill. Si siguen en true, no hubo ninguno.
+    //
+    //   · Una recepcionista, en cambio, es justamente lo que un owner PUEDE
+    //     apagar desde la UI. Fijar su valor acá sería pinear un estado del
+    //     fixture y no una propiedad de la migración: el test fallaría cuando
+    //     alguien usa la aplicación como corresponde.
     {
       const { data } = await admin.from('tenant_users')
-        .select('email, can_confirm_reservations, updated_at')
-        .in('email', ['owner.demo@reservanex.test', 'owner.gastro@reservanex.test', 'recep.gastro@reservanex.test'])
+        .select('email, role, can_confirm_reservations')
+        .in('email', ['owner.demo@reservanex.test', 'owner.gastro@reservanex.test'])
         .order('email')
-      const filas = (data ?? []) as { email: string; can_confirm_reservations: boolean; updated_at: string }[]
-      const todasTrue = filas.length === 3 && filas.every((f) => f.can_confirm_reservations === true)
-      if (todasTrue) {
-        ok(`AL. (D) las 3 filas preexistentes conservan can_confirm_reservations = true tras cambiar el default (sin backfill)`)
-      } else nok('AL. alguna fila preexistente cambió', JSON.stringify(filas))
+      const filas = (data ?? []) as { email: string; role: string; can_confirm_reservations: boolean }[]
+      const owners = filas.filter((f) => f.role === 'owner')
+
+      if (owners.length > 0 && owners.every((f) => f.can_confirm_reservations === true)) {
+        ok(`AL. (D) los ${owners.length} owners preexistentes conservan can_confirm_reservations = true: la migración no hizo backfill`)
+      } else if (owners.length === 0) {
+        // El fixture puede no estar preparado; no se inventa un ✓.
+        console.log('      AL. sin owners preexistentes en este proyecto — nada que comprobar')
+      } else nok('AL. un owner preexistente cambió de valor', JSON.stringify(owners))
     }
 
     // ── El caso que motivó todo: order_request ────────────────────────────────

@@ -100,10 +100,14 @@ export {
   updateMenuCategorySchema,
   createMenuItemSchema,
   updateMenuItemSchema,
+  menuItemRowPatchSchema,
+  saveMenuItemsSchema,
 } from './menu'
 export type {
   CreateMenuCategoryInput,
   UpdateMenuCategoryInput,
   CreateMenuItemInput,
   UpdateMenuItemInput,
+  MenuItemRowPatch,
+  SaveMenuItemsInput,
 } from './menu'

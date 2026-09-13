@@ -6,6 +6,7 @@ import {
   updateMenuCategorySchema,
   createMenuItemSchema,
   updateMenuItemSchema,
+  saveMenuItemsSchema,
 } from '@orderflow/validators'
 import { requireTenantContext, type TenantContext } from '@/lib/auth/require-tenant-context'
 import { routeAllowsVertical } from '@/lib/dashboard/module-verticals'
@@ -190,6 +191,62 @@ export async function updateMenuItemAction(id: string, input: unknown): Promise<
     return { success: true }
   } catch (err) {
     console.error('[menu] updateMenuItemAction failed:', err)
+    return { success: false, error: mensajeDeError(err, 'item') }
+  }
+}
+
+/**
+ * Guardado por lotes de la grilla.
+ *
+ * Una sola llamada para todas las filas modificadas. Las tres capas de siempre y
+ * en el mismo orden: rubro → permiso → RLS. La validación de cada fila usa
+ * saveMenuItemsSchema, que extiende createMenuItemSchema y por lo tanto sigue
+ * usando menuPriceSchema — el único parser de precios del producto. "1500.999" se
+ * rechaza acá, con mensaje, antes de que NUMERIC(14,2) lo redondee en silencio.
+ *
+ * Si una fila falla, las demás se guardan igual y se devuelve cuáles fallaron con
+ * su nombre. No se finge un éxito global.
+ */
+export async function saveMenuItemsAction(
+  input: unknown,
+): Promise<ActionResult<{ saved: number; failed: { id: string; error: string }[] }>> {
+  const g = await guard()
+  if (!g.ok) return { success: false, error: g.error }
+
+  const parsed = saveMenuItemsSchema.safeParse(input)
+  if (!parsed.success) {
+    const primero = parsed.error.errors[0]
+    // El índice de la fila ayuda: "Ingresá un precio válido" sin decir dónde no
+    // sirve de nada cuando hay veinte filas editadas.
+    const fila = typeof primero?.path?.[1] === 'number' ? ` (fila ${primero.path[1] + 1})` : ''
+    return { success: false, error: `${primero?.message ?? 'Datos inválidos.'}${fila}` }
+  }
+
+  try {
+    const resultados = await repo.updateMenuItemsBatch(g.ctx.tenantId, parsed.data.changes)
+    revalidatePath(MENU_PATH)
+
+    const fallidas = resultados.filter((r) => !r.ok)
+    const nombrePorId = new Map(parsed.data.changes.map((c) => [c.id, c.name]))
+
+    if (fallidas.length === 0) {
+      return { success: true, data: { saved: resultados.length, failed: [] } }
+    }
+
+    return {
+      success: true,
+      data: {
+        saved:  resultados.length - fallidas.length,
+        failed: fallidas.map((f) => ({
+          id:    f.id,
+          error: `${nombrePorId.get(f.id) ?? 'Producto'}: ${mensajeDeError(
+            new MenuRepositoryError(f.error ?? '', f.code ?? null), 'item',
+          )}`,
+        })),
+      },
+    }
+  } catch (err) {
+    console.error('[menu] saveMenuItemsAction failed:', err)
     return { success: false, error: mensajeDeError(err, 'item') }
   }
 }
