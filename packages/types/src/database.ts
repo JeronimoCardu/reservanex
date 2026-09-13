@@ -993,6 +993,118 @@ export type Database = {
           },
         ]
       }
+      menu_categories: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          name: string
+          sort_order: number
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          name: string
+          sort_order?: number
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          name?: string
+          sort_order?: number
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "menu_categories_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "menu_categories_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants_public"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      menu_items: {
+        Row: {
+          available: boolean
+          base_price: number
+          category_id: string
+          created_at: string
+          deleted_at: string | null
+          description: string | null
+          id: string
+          name: string
+          published: boolean
+          sort_order: number
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          available?: boolean
+          base_price: number
+          category_id: string
+          created_at?: string
+          deleted_at?: string | null
+          description?: string | null
+          id?: string
+          name: string
+          published?: boolean
+          sort_order?: number
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          available?: boolean
+          base_price?: number
+          category_id?: string
+          created_at?: string
+          deleted_at?: string | null
+          description?: string | null
+          id?: string
+          name?: string
+          published?: boolean
+          sort_order?: number
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "menu_items_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "menu_categories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "menu_items_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "menu_items_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants_public"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       message_queue: {
         Row: {
           attempts: number
@@ -2994,6 +3106,7 @@ export type Database = {
           can_confirm_reservations: boolean
           can_create_properties: boolean
           can_manage_inquiries: boolean
+          can_manage_menu: boolean
           can_manage_table_reservations: boolean
           can_manage_visits: boolean
           created_at: string
@@ -3011,6 +3124,7 @@ export type Database = {
           can_confirm_reservations?: boolean
           can_create_properties?: boolean
           can_manage_inquiries?: boolean
+          can_manage_menu?: boolean
           can_manage_table_reservations?: boolean
           can_manage_visits?: boolean
           created_at?: string
@@ -3028,6 +3142,7 @@ export type Database = {
           can_confirm_reservations?: boolean
           can_create_properties?: boolean
           can_manage_inquiries?: boolean
+          can_manage_menu?: boolean
           can_manage_table_reservations?: boolean
           can_manage_visits?: boolean
           created_at?: string

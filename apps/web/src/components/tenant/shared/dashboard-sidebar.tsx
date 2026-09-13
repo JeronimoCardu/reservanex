@@ -2,61 +2,32 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import {
-  MessageSquareIcon,
-  Users2Icon,
-  Building2Icon,
-  CheckSquareIcon,
-  UsersIcon,
-  CalendarIcon,
-  BarChart3Icon,
-  SettingsIcon,
-  BotIcon,
-  LogOutIcon,
-  KeyRoundIcon,
-  InboxIcon,
-  CalendarClockIcon,
-  UtensilsCrossedIcon,
-} from 'lucide-react'
+import { SettingsIcon, BotIcon, LogOutIcon } from 'lucide-react'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@orderflow/supabase/browser'
 import type { TenantRole } from '@orderflow/types'
+import type { TenantVertical } from '@orderflow/validators'
+import { COMING_SOON, visibleNavItems } from '@/lib/dashboard/nav-items'
 import { cn } from '@/lib/utils'
-
-const ALL_NAV_ITEMS = [
-  { label: 'Conversaciones',       href: '/dashboard/conversations',    icon: MessageSquareIcon, ownerOnly: false, setupBlocked: true  },
-  { label: 'Solicitudes',          href: '/dashboard/requests',         icon: InboxIcon,         ownerOnly: false, setupBlocked: true  },
-  { label: 'Contactos',            href: '/dashboard/contacts',         icon: Users2Icon,        ownerOnly: false, setupBlocked: true  },
-  { label: 'Propiedades',          href: '/dashboard/properties',       icon: Building2Icon,     ownerOnly: false, setupBlocked: false },
-  { label: 'Reservas',             href: '/dashboard/reservations',     icon: CalendarIcon,      ownerOnly: false, setupBlocked: true  },
-  { label: 'Visitas',              href: '/dashboard/visits',           icon: CalendarClockIcon, ownerOnly: false, setupBlocked: true  },
-  { label: 'Reservas de mesa',     href: '/dashboard/table-reservations', icon: UtensilsCrossedIcon, ownerOnly: false, setupBlocked: true  },
-  { label: 'Alquileres mensuales', href: '/dashboard/monthly-rentals',  icon: KeyRoundIcon,      ownerOnly: false, setupBlocked: true  },
-  { label: 'Tareas',               href: '/dashboard/tasks',            icon: CheckSquareIcon,   ownerOnly: false, setupBlocked: true  },
-  { label: 'Usuarios',             href: '/dashboard/users',            icon: UsersIcon,         ownerOnly: true,  setupBlocked: false },
-] as const satisfies readonly { label: string; href: string; icon: React.ElementType; ownerOnly: boolean; setupBlocked: boolean }[]
-
-const COMING_SOON = [
-  { label: 'Métricas', icon: BarChart3Icon },
-] as const satisfies readonly { label: string; icon: React.ElementType }[]
 
 interface DashboardSidebarProps {
   role:              TenantRole
   canAccessSettings: boolean
+  // Fase 3E-C3A1 — el rubro decide qué módulos existen para este tenant.
+  vertical:          TenantVertical
   isSetupOperator?:  boolean
 }
 
-export function DashboardSidebar({ role, canAccessSettings, isSetupOperator = false }: DashboardSidebarProps) {
+export function DashboardSidebar({ role, canAccessSettings, vertical, isSetupOperator = false }: DashboardSidebarProps) {
   const pathname   = usePathname()
   const router     = useRouter()
   const [loggingOut, setLoggingOut] = useState(false)
 
-  const navItems = ALL_NAV_ITEMS.filter((item) => {
-    if (isSetupOperator && item.setupBlocked) return false
-    if (item.ownerOnly && role !== 'owner') return false
-    return true
-  })
+  // Misma función que usa el mobile nav, y que lee el mismo mapa de rubros que
+  // el guard de ruta server-side. Sin esto, escritorio y celular podían mostrar
+  // listas distintas.
+  const navItems = visibleNavItems({ role, vertical, isSetupOperator })
   const showSettings = isSetupOperator || role === 'owner' || canAccessSettings
 
   async function handleLogout() {

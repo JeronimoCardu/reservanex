@@ -397,6 +397,9 @@ export type ReceptionistPermissions = {
   can_manage_visits:        boolean
   // Fase 3E-C2 — reservas de mesa, ídem.
   can_manage_table_reservations: boolean
+  // Fase 3E-C3A1 — administrar el catálogo gastronómico es una decisión
+  // comercial (fija precios), distinta de la operación del salón.
+  can_manage_menu:          boolean
 }
 
 export async function updateReceptionistPermissions(

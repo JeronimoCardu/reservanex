@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Plus, Pencil, UserX, Users, ShieldCheck, Send } from 'lucide-react'
 import { toast } from 'sonner'
+import type { TenantVertical } from '@orderflow/validators'
 import type { TenantUserWithWorkspaceIds } from '@/lib/repositories/users.repository'
 import { resendUserAccessAction } from '@/actions/users'
 import { Button } from '@/components/ui/button'
@@ -33,9 +34,12 @@ const ROLE_VARIANT: Record<string, 'default' | 'secondary'> = {
 interface UserTableProps {
   users: TenantUserWithWorkspaceIds[]
   currentUserId: string
+  // Fase 3E-C3A1 — solo se reenvía al diálogo de permisos, que es quien decide
+  // qué mostrar. La tabla no filtra nada.
+  vertical: TenantVertical
 }
 
-export function UserTable({ users, currentUserId }: UserTableProps) {
+export function UserTable({ users, currentUserId, vertical }: UserTableProps) {
   const [createOpen, setCreateOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<TenantUserWithWorkspaceIds | null>(null)
   const [deactivateTarget, setDeactivateTarget] = useState<TenantUserWithWorkspaceIds | null>(null)
@@ -210,6 +214,7 @@ export function UserTable({ users, currentUserId }: UserTableProps) {
 
       <ReceptionistPermissionsDialog
         user={permissionsTarget}
+        vertical={vertical}
         open={!!permissionsTarget}
         onOpenChange={(open) => {
           if (!open) setPermissionsTarget(null)

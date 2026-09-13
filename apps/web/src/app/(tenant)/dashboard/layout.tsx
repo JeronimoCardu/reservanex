@@ -29,12 +29,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <DashboardSidebar
           role={ctx.role}
           canAccessSettings={ctx.canAccessSettings}
+          vertical={ctx.vertical}
           isSetupOperator={isSetupOperator}
         />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <MobileNav
             role={ctx.role}
             canAccessSettings={ctx.canAccessSettings}
+            vertical={ctx.vertical}
             isSetupOperator={isSetupOperator}
           />
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">

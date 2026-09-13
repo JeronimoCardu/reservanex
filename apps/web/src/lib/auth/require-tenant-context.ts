@@ -3,6 +3,7 @@ import { createClient } from '@orderflow/supabase/server'
 import { createAdminClient } from '@orderflow/supabase/admin'
 import { parseAccessTokenClaims } from '@/lib/claims'
 import type { TenantRole } from '@orderflow/types'
+import { tenantVerticalSchema, type TenantVertical } from '@orderflow/validators'
 
 export type AccessMode = 'tenant_user' | 'setup_operator'
 
@@ -18,17 +19,49 @@ export type TenantContext = {
   canManageInquiries:      boolean
   canManageVisits:         boolean
   canManageTableReservations: boolean
+  canManageMenu:           boolean
+  // Fase 3E-C3A1 — el rubro del tenant. Decide qué MÓDULOS existen para este
+  // tenant, que es un eje distinto de los permisos de arriba: esos deciden qué
+  // puede hacer ESTE USUARIO dentro de un módulo que ya existe.
+  vertical:                TenantVertical
   accessMode:              AccessMode
+}
+
+// El rubro del tenant.
+//
+// La base YA lo garantiza, verificado contra el proyecto deployado:
+//
+//   tenants.vertical  TEXT  NOT NULL  DEFAULT 'real_estate'
+//   CHECK (vertical = ANY (ARRAY['real_estate'::text, 'food_service'::text]))
+//
+// (TEXT + CHECK y no un enum de PG, como el resto de las taxonomías del repo,
+// para que los tipos generados no cambien de forma en cada valor nuevo.)
+//
+// O sea que para una fila real este fallback es INALCANZABLE: no puede ser NULL
+// ni traer otro valor. Se mantiene igual porque la firma recibe `unknown` —
+// supabase-js entrega TEXT como string sin validar el CHECK— y porque un fallback
+// que nunca se ejecuta cuesta nada, mientras que su ausencia obligaría a un `as`.
+//
+// Cae en 'real_estate', que además es el propio DEFAULT de la columna: si algún
+// día se agregara una vertical nueva sin actualizar tenantVerticalSchema, ese
+// tenant vería los módulos inmobiliarios en vez de todos. Falla cerrado hacia el
+// rubro histórico, no hacia el acceso total.
+function parseVertical(raw: unknown): TenantVertical {
+  const parsed = tenantVerticalSchema.safeParse(raw)
+  return parsed.success ? parsed.data : 'real_estate'
 }
 
 // Tenant statuses that allow normal CRM access.
 const ACTIVE_STATUSES = new Set(['trial', 'active'])
 
-async function checkTenantAccess(tenantId: string): Promise<void> {
+// Devuelve el rubro, que ya viene gratis en esta query: el acceso al tenant se
+// verifica en todos los caminos, así que es el único lugar donde leerlo sin
+// agregar un roundtrip.
+async function checkTenantAccess(tenantId: string): Promise<TenantVertical> {
   const admin = createAdminClient()
   const { data } = await admin
     .from('tenants')
-    .select('status')
+    .select('status, vertical')
     .eq('id', tenantId)
     .is('deleted_at', null)
     .maybeSingle()
@@ -36,6 +69,8 @@ async function checkTenantAccess(tenantId: string): Promise<void> {
   if (!data || !ACTIVE_STATUSES.has(data.status)) {
     redirect('/account-suspended')
   }
+
+  return parseVertical(data.vertical)
 }
 
 export async function requireTenantContext(): Promise<TenantContext> {
@@ -102,7 +137,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
       // or when the tenant is live (status = 'active').
       const { data: tenantState } = await admin
         .from('tenants')
-        .select('status, onboarding_status, deleted_at')
+        .select('status, onboarding_status, deleted_at, vertical')
         .eq('id', imp.target_tenant_id)
         .maybeSingle()
 
@@ -133,12 +168,14 @@ export async function requireTenantContext(): Promise<TenantContext> {
         canManageInquiries:      false,
         canManageVisits:         false,
         canManageTableReservations: false,
+        canManageMenu:           false,
+        vertical:                parseVertical(tenantState.vertical),
         accessMode:              'setup_operator',
       }
     }
 
     // SA: verify the tenant is accessible (not suspended/cancelled/deleted).
-    await checkTenantAccess(imp.target_tenant_id)
+    const saVertical = await checkTenantAccess(imp.target_tenant_id)
 
     return {
       userId:                  user.id,
@@ -152,6 +189,8 @@ export async function requireTenantContext(): Promise<TenantContext> {
       canManageInquiries:      false,
       canManageVisits:         false,
       canManageTableReservations: false,
+      canManageMenu:           false,
+      vertical:                saVertical,
       accessMode:              'setup_operator',
     }
   }
@@ -160,7 +199,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
   if (claims.user_type !== 'tenant_user') redirect('/login')
 
   // Block suspended/cancelled tenants from accessing the CRM.
-  await checkTenantAccess(claims.tenant_id)
+  const vertical = await checkTenantAccess(claims.tenant_id)
 
   // Owners always have all permissions — no extra DB query needed.
   if (claims.role === 'owner') {
@@ -176,6 +215,8 @@ export async function requireTenantContext(): Promise<TenantContext> {
       canManageInquiries:      true,
       canManageVisits:         true,
       canManageTableReservations: true,
+      canManageMenu:           true,
+      vertical,
       accessMode:              'tenant_user',
     }
   }
@@ -183,7 +224,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
   // Receptionists: fetch granular permissions from DB.
   const { data: perms, error: permsErr } = await supabase
     .from('tenant_users')
-    .select('can_access_settings, can_assign_conversations, can_create_properties, can_confirm_reservations, can_manage_inquiries, can_manage_visits, can_manage_table_reservations')
+    .select('can_access_settings, can_assign_conversations, can_create_properties, can_confirm_reservations, can_manage_inquiries, can_manage_visits, can_manage_table_reservations, can_manage_menu')
     .eq('id', user.id)
     .eq('tenant_id', claims.tenant_id)
     .maybeSingle()
@@ -204,6 +245,8 @@ export async function requireTenantContext(): Promise<TenantContext> {
     canManageInquiries:      perms?.can_manage_inquiries      ?? false,
     canManageVisits:         perms?.can_manage_visits         ?? false,
     canManageTableReservations: perms?.can_manage_table_reservations ?? false,
+    canManageMenu:           perms?.can_manage_menu           ?? false,
+    vertical,
     accessMode:              'tenant_user',
   }
 }

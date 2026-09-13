@@ -93,3 +93,17 @@ export type {
   FormDefinition,
   CreateSubmissionRequest,
 } from './forms'
+
+export {
+  menuPriceSchema,
+  createMenuCategorySchema,
+  updateMenuCategorySchema,
+  createMenuItemSchema,
+  updateMenuItemSchema,
+} from './menu'
+export type {
+  CreateMenuCategoryInput,
+  UpdateMenuCategoryInput,
+  CreateMenuItemInput,
+  UpdateMenuItemInput,
+} from './menu'

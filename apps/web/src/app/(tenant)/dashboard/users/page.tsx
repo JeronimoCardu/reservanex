@@ -8,7 +8,8 @@ export const metadata: Metadata = {
 }
 
 export default async function UsersPage() {
-  const { tenantId, userId } = await requireOwner()
+  // El rubro sale del mismo requireOwner(): no agrega ninguna consulta.
+  const { tenantId, userId, vertical } = await requireOwner()
   const users = await listTenantUsers(tenantId)
 
   const active   = users.filter((u) => u.active).length
@@ -24,7 +25,7 @@ export default async function UsersPage() {
         </p>
       </div>
       <div className="flex-1 overflow-y-auto px-6 py-6">
-        <UserTable users={users} currentUserId={userId} />
+        <UserTable users={users} currentUserId={userId} vertical={vertical} />
       </div>
     </div>
   )
