@@ -62,6 +62,7 @@ export function ReceptionistPermissionsDialog({
       can_manage_visits: user.can_manage_visits,
       can_manage_table_reservations: user.can_manage_table_reservations,
       can_manage_menu: user.can_manage_menu,
+      can_manage_orders: user.can_manage_orders,
     })
   }
 
@@ -84,6 +85,7 @@ export function ReceptionistPermissionsDialog({
     can_manage_visits:             user.can_manage_visits,
     can_manage_table_reservations: user.can_manage_table_reservations,
     can_manage_menu:               user.can_manage_menu,
+    can_manage_orders:             user.can_manage_orders,
   })
 
   function toggle(key: keyof Permissions) {

@@ -1123,6 +1123,7 @@ async function main() {
       can_manage_menu:               false,
       can_manage_table_reservations: false,
       can_manage_visits:             false,
+      can_manage_orders:             false,   // Fase 3E-C3B0
     }
     const COLS = Object.keys(DEFAULTS_ESPERADOS).join(', ')
 
@@ -1136,7 +1137,7 @@ async function main() {
         .map(([k, v]) => `${k}: esperado ${v}, real ${fila?.[k]}`)
 
       if (fila && divergen.length === 0) {
-        ok('AJ. (A/B/C) una recepcionista creada SIN enviar columnas can_* —igual que createTenantUser()— nace con los 8 permisos en false')
+        ok('AJ. (A/B/C) una recepcionista creada SIN enviar columnas can_* —igual que createTenantUser()— nace con los 9 permisos en false, incluido can_manage_orders')
       } else nok('AJ. los defaults no son los esperados', divergen.join(' · '))
     }
 
@@ -1223,36 +1224,90 @@ async function main() {
       } else nok('§5. la solicitud no quedó como se esperaba', JSON.stringify(o))
     }
 
-    // ── AM. G. la recepcionista NUEVA no puede confirmarlo ───────────────────
+    // ── AM. una recepcionista NUEVA no puede confirmarlo ─────────────────────
+    // Y ahora el permiso que le falta es can_manage_orders, no el legacy.
     {
       const { data } = await asNuevaA.rpc('decide_operation_request', {
         p_operation_id: opOrder, p_action: 'confirmed',
       })
       const d = data as Decision | null
-      if (d?.outcome === 'forbidden' && d.required_permission === 'can_confirm_reservations') {
-        ok('AM. (G) una recepcionista gastronómica NUEVA no puede confirmar un order_request solo por haber sido creada — forbidden, requiere can_confirm_reservations')
-      } else nok('AM. la recepcionista nueva pudo decidir un order_request', JSON.stringify(d))
+      if (d?.outcome === 'forbidden' && d.required_permission === 'can_manage_orders') {
+        ok('AM. una recepcionista gastronómica NUEVA no puede confirmar un order_request — forbidden, requiere can_manage_orders')
+      } else nok('AM. la recepcionista nueva pudo decidir, o el permiso requerido no es el nuevo', JSON.stringify(d))
 
       const { data: sigue } = await admin.from('operation_requests')
         .select('status, decided_at, decided_by').eq('id', opOrder).maybeSingle()
       const sg = sigue as { status: string; decided_at: string | null; decided_by: string | null } | null
       if (sg?.status === 'pending' && sg.decided_at === null && sg.decided_by === null) {
-        ok('AM. (G) y la solicitud sigue pending, sin decided_at ni decided_by')
+        ok('AM. y la solicitud sigue pending, sin decided_at ni decided_by')
       } else nok('AM. el rechazo dejó rastro en la solicitud', JSON.stringify(sg))
     }
 
-    // ── AO. E/F. concedido explícitamente, SÍ puede ──────────────────────────
+    // ── C. EL CASO QUE DEMUESTRA QUE EL LEGACY ESTÁ CERRADO ──────────────────
+    //
+    // can_confirm_reservations = TRUE, can_manage_orders = FALSE.
+    // Antes de 3E-C3B0 esto confirmaba el pedido. Ahora no.
     {
-      await admin.from('tenant_users')
-        .update({ can_confirm_reservations: true } as never).eq('id', A.recepNueva.id)
+      await admin.from('tenant_users').update({
+        can_confirm_reservations: true, can_manage_orders: false,
+      } as never).eq('id', A.recepNueva.id)
+
+      const { data } = await asNuevaA.rpc('decide_operation_request', {
+        p_operation_id: opOrder, p_action: 'confirmed',
+      })
+      const d = data as Decision | null
+      if (d?.outcome === 'forbidden' && d.required_permission === 'can_manage_orders') {
+        ok('C. LEGACY CERRADO: con can_confirm_reservations=TRUE y can_manage_orders=FALSE ya NO puede confirmar un pedido')
+      } else nok('C. can_confirm_reservations siguió autorizando order_request', JSON.stringify(d))
+
+      const { data: sigue } = await admin.from('operation_requests')
+        .select('status').eq('id', opOrder).maybeSingle()
+      if ((sigue as { status: string } | null)?.status === 'pending') {
+        ok('C. y la solicitud sigue pending')
+      } else nok('C. la solicitud cambió de estado')
+    }
+
+    // ── D. concedido el permiso NUEVO, SÍ puede ──────────────────────────────
+    {
+      await admin.from('tenant_users').update({
+        can_manage_orders: true, can_confirm_reservations: false,
+      } as never).eq('id', A.recepNueva.id)
 
       const { data } = await asNuevaA.rpc('decide_operation_request', {
         p_operation_id: opOrder, p_action: 'confirmed',
       })
       const d = data as Decision | null
       if (d?.outcome === 'confirmed') {
-        ok('AO. (E/F) con can_confirm_reservations concedido explícitamente SÍ confirma: cambió el default, no la autorización por kind')
-      } else nok('AO. el permiso explícito no habilitó la decisión', JSON.stringify(d))
+        ok('D. con can_manage_orders=TRUE y can_confirm_reservations=FALSE SÍ confirma el pedido')
+      } else nok('D. can_manage_orders no habilitó la decisión', JSON.stringify(d))
+    }
+
+    // ── E. can_manage_orders no concede NINGÚN otro kind ─────────────────────
+    {
+      // La recepcionista tiene SOLO can_manage_orders. Se le pone enfrente una
+      // consulta, que exige can_manage_inquiries.
+      const { data: subInq2, error: e2 } = await admin.from('form_submissions').insert({
+        tenant_id: A.id, reference: generateSubmissionReference(),
+        intent: 'general_inquiry', status: 'submitted', source: 'public_site',
+        payload: { name: 'Probe E', message: '¿Hacen sin TACC?' } as never,
+        idempotency_key: randomUUID(), contact_id: A.contactId,
+        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      } as never).select('id').single()
+      if (e2 || !subInq2) throw new Error(`submission E: ${e2?.message}`)
+
+      const { data: rpcE } = await admin.rpc('confirm_submission_and_create_operation', {
+        p_submission_id: subInq2.id, p_tenant_id: A.id, p_contact_id: A.contactId,
+        p_conversation_id: undefined,
+      })
+      const opE = (rpcE as { operation_id?: string } | null)?.operation_id
+
+      const { data } = await asNuevaA.rpc('decide_operation_request', {
+        p_operation_id: opE!, p_action: 'confirmed',
+      })
+      const d = data as Decision | null
+      if (d?.outcome === 'forbidden' && d.required_permission === 'can_manage_inquiries') {
+        ok('E. can_manage_orders NO concede inquiry: sigue exigiendo can_manage_inquiries')
+      } else nok('E. can_manage_orders autorizó otro kind', JSON.stringify(d))
     }
 
     // ── AP. §5. confirmar un order_request no materializa nada ───────────────
@@ -1269,24 +1324,25 @@ async function main() {
       const o = op as { status: string; decided_by: string | null } | null
       if (o?.status === 'confirmed' && o.decided_by === A.recepNueva.id
           && (mesas ?? 0) === 0 && (visitas ?? 0) === 0 && (reservas ?? 0) === 0) {
-        ok('AP. (§5) order_request pasa pending → confirmed y NO materializa nada: 0 reservas de mesa, 0 visitas, 0 reservas')
+        ok('J/K. order_request pasa pending → confirmed con decided_by correcto y NO materializa nada: 0 reservas de mesa, 0 visitas, 0 reservas (orders todavía no existe)')
       } else nok('AP. la confirmación de un pedido materializó algo', JSON.stringify({ o, mesas, visitas, reservas }))
     }
 
     // ── AN. H. el owner se autoriza por ROL, no por el flag ──────────────────
     {
       const { data: ow } = await admin.from('tenant_users')
-        .select('can_confirm_reservations').eq('id', A.owner.id).maybeSingle()
-      const flagOwner = (ow as { can_confirm_reservations: boolean } | null)?.can_confirm_reservations
+        .select('can_confirm_reservations, can_manage_orders').eq('id', A.owner.id).maybeSingle()
+      const o2 = ow as { can_confirm_reservations: boolean; can_manage_orders: boolean } | null
+      const flagOwner = o2?.can_confirm_reservations === false && o2?.can_manage_orders === false
 
       const opOrder2 = await mkOrderRequest(A.id, A.contactId)
       const { data } = await asOwnerA.rpc('decide_operation_request', {
         p_operation_id: opOrder2, p_action: 'confirmed',
       })
       const d = data as Decision | null
-      if (flagOwner === false && d?.outcome === 'confirmed') {
-        ok('AN. (H) el owner confirma un order_request con can_confirm_reservations = FALSE: se autoriza por ROL, no por el flag')
-      } else nok('AN. el owner no se autorizó por rol', JSON.stringify({ flagOwner, d }))
+      if (flagOwner && d?.outcome === 'confirmed') {
+        ok('B. el owner confirma un order_request con can_manage_orders = FALSE y can_confirm_reservations = FALSE: se autoriza por ROL, no por flags')
+      } else nok('B. el owner no se autorizó por rol', JSON.stringify({ flagOwner, d }))
     }
 
     // ── §5. el mapa de autorización por kind no se tocó ──────────────────────

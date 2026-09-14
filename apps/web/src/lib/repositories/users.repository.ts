@@ -400,6 +400,9 @@ export type ReceptionistPermissions = {
   // Fase 3E-C3A1 — administrar el catálogo gastronómico es una decisión
   // comercial (fija precios), distinta de la operación del salón.
   can_manage_menu:          boolean
+  // Fase 3E-C3B0 — aceptar/rechazar pedidos. Cierra el último legacy: hasta
+  // acá order_request se autorizaba con can_confirm_reservations.
+  can_manage_orders:        boolean
 }
 
 export async function updateReceptionistPermissions(

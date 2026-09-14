@@ -11,6 +11,7 @@ import {
   requestTypeLabel,
   requiresScheduling,
   requiresTableBooking,
+  requiredPermissionForKind,
   rowHighlights,
   tableReservationStatusLabel,
   tableReservationStatusTone,
@@ -22,6 +23,7 @@ import {
   KIND_LABELS,
   STATUS_LABELS,
 } from './presentation'
+import { PERMISSION_FIELDS } from '@/lib/dashboard/permission-fields'
 
 describe('etiquetas', () => {
   it('cubre los 5 kinds y los 4 estados', () => {
@@ -445,5 +447,51 @@ describe('estados de table_reservations (3E-C2)', () => {
   it('no rompe con un estado desconocido', () => {
     expect(tableReservationStatusLabel('vaya')).toBe('vaya')
     expect(tableReservationStatusTone('vaya')).toBe('zinc')
+  })
+})
+
+describe('requiredPermissionForKind (3E-C3B0)', () => {
+  it('cada kind exige su propio permiso', () => {
+    expect(requiredPermissionForKind('inquiry')).toBe('can_manage_inquiries')
+    expect(requiredPermissionForKind('visit_request')).toBe('can_manage_visits')
+    expect(requiredPermissionForKind('table_request')).toBe('can_manage_table_reservations')
+    expect(requiredPermissionForKind('order_request')).toBe('can_manage_orders')
+    expect(requiredPermissionForKind('reservation_request')).toBe('can_confirm_reservations')
+  })
+
+  it('EL CIERRE DEL LEGACY: un pedido ya no cuelga de can_confirm_reservations', () => {
+    // Antes de 3E-C3B0 no había rama para order_request y caía en el fallback,
+    // que devolvía el permiso del alquiler temporal.
+    expect(requiredPermissionForKind('order_request')).not.toBe('can_confirm_reservations')
+  })
+
+  it('can_confirm_reservations queda SOLO para reservation_request', () => {
+    const conLegacy = Object.keys(KIND_LABELS).filter(
+      (k) => requiredPermissionForKind(k) === 'can_confirm_reservations',
+    )
+    expect(conLegacy).toEqual(['reservation_request'])
+  })
+
+  it('el mapa es TOTAL sobre los kinds conocidos', () => {
+    // Si mañana entra un kind nuevo a KIND_LABELS sin decidir su permiso, esto
+    // falla acá en vez de fallar en producción como botón que no hace nada.
+    for (const kind of Object.keys(KIND_LABELS)) {
+      expect(requiredPermissionForKind(kind), kind).not.toBeNull()
+    }
+  })
+
+  it('un kind desconocido falla cerrado', () => {
+    // La RPC responde outcome 'unknown_kind'; la UI no dibuja ningún botón.
+    expect(requiredPermissionForKind('lo_que_sea')).toBeNull()
+    expect(requiredPermissionForKind('')).toBeNull()
+  })
+
+  it('todo permiso que devuelve existe en PERMISSION_FIELDS', () => {
+    // requests-client busca ahí la etiqueta del aviso "no tenés permiso...":
+    // una clave huérfana dejaría el mensaje genérico sin que nadie se entere.
+    const declaradas = new Set(PERMISSION_FIELDS.map((f) => f.key))
+    for (const kind of Object.keys(KIND_LABELS)) {
+      expect(declaradas.has(requiredPermissionForKind(kind)!), kind).toBe(true)
+    }
   })
 })

@@ -3113,6 +3113,7 @@ export type Database = {
           can_create_properties: boolean
           can_manage_inquiries: boolean
           can_manage_menu: boolean
+          can_manage_orders: boolean
           can_manage_table_reservations: boolean
           can_manage_visits: boolean
           created_at: string
@@ -3131,6 +3132,7 @@ export type Database = {
           can_create_properties?: boolean
           can_manage_inquiries?: boolean
           can_manage_menu?: boolean
+          can_manage_orders?: boolean
           can_manage_table_reservations?: boolean
           can_manage_visits?: boolean
           created_at?: string
@@ -3149,6 +3151,7 @@ export type Database = {
           can_create_properties?: boolean
           can_manage_inquiries?: boolean
           can_manage_menu?: boolean
+          can_manage_orders?: boolean
           can_manage_table_reservations?: boolean
           can_manage_visits?: boolean
           created_at?: string

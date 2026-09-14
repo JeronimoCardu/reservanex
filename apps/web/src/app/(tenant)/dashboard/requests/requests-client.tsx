@@ -23,10 +23,12 @@ import {
   requiresScheduling,
   requestTypeLabel,
   requiresTableBooking,
+  requiredPermissionForKind,
   rowHighlights,
   statusLabel,
   statusTone,
 } from '@/lib/operation-requests/presentation'
+import { PERMISSION_FIELDS, type ReceptionistPermissionKey } from '@/lib/dashboard/permission-fields'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -89,6 +91,7 @@ export function RequestsClient({
   canManageInquiries,
   canManageVisits,
   canManageTables,
+  canManageOrders,
   activeFilter,
 }: {
   requests:              OperationRequestListItem[]
@@ -96,6 +99,7 @@ export function RequestsClient({
   canManageInquiries:    boolean
   canManageVisits:       boolean
   canManageTables:       boolean
+  canManageOrders:       boolean
   activeFilter:          OperationRequestStatus | 'all'
 }) {
   const router = useRouter()
@@ -119,12 +123,34 @@ export function RequestsClient({
 
   // Fase 3E-B1 — el permiso se evalúa por solicitud, no una vez para toda la
   // bandeja: gestionar una consulta no es la misma autoridad que aprobar una
-  // reserva. Es el mismo mapa que aplica la RPC, que sigue siendo la autoridad.
+  // reserva. La RPC lo revalida igual y sigue siendo la autoridad.
+  //
+  // Fase 3E-C3B0 — el mapa kind -> permiso se fue a requiredPermissionForKind()
+  // y acá quedó solo el vector de lo CONCEDIDO. De paso desapareció el
+  // fallback permisivo: antes, todo lo que no fuera consulta, visita o mesa
+  // terminaba en canDecideReservations, así que a un pedido le dibujaba los
+  // botones quien tuviera can_confirm_reservations — que ya no puede decidirlo.
+  const otorgado: Partial<Record<ReceptionistPermissionKey, boolean>> = {
+    can_manage_inquiries:          canManageInquiries,
+    can_manage_visits:             canManageVisits,
+    can_manage_table_reservations: canManageTables,
+    can_manage_orders:             canManageOrders,
+    can_confirm_reservations:      canDecideReservations,
+  }
+
   function puedeDecidir(op: OperationRequestListItem): boolean {
-    if (isInquiry(op.kind))            return canManageInquiries
-    if (requiresScheduling(op.kind))   return canManageVisits
-    if (requiresTableBooking(op.kind)) return canManageTables
-    return canDecideReservations
+    const necesita = requiredPermissionForKind(op.kind)
+    return necesita !== null && otorgado[necesita] === true
+  }
+
+  // El aviso nombra el permiso que falta, con la MISMA etiqueta que ve el owner
+  // en el diálogo de permisos. El texto genérico de antes mandaba a pedir
+  // 'Confirmar reservas' para cualquier kind que no fuera una consulta.
+  function permisoFaltante(kind: string): string {
+    const necesita = requiredPermissionForKind(kind)
+    const etiqueta = PERMISSION_FIELDS.find((f) => f.key === necesita)?.label
+    if (!etiqueta) return 'No tenés permiso para decidir esta solicitud.'
+    return `No tenés permiso para ${etiqueta.toLowerCase()}. Pedile a un owner que te habilite “${etiqueta}”.`
   }
 
   function decide(op: OperationRequestListItem, action: 'confirmed' | 'rejected', motivo?: string) {
@@ -372,9 +398,7 @@ export function RequestsClient({
 
               {selected.status === 'pending' && !puedeDecidir(selected) && (
                 <p className="text-sm text-muted-foreground">
-                  {isInquiry(selected.kind)
-                    ? 'No tenés permiso para gestionar consultas. Pedile a un owner que te habilite “Gestionar consultas”.'
-                    : 'No tenés permiso para decidir solicitudes de reserva.'}
+                  {permisoFaltante(selected.kind)}
                 </p>
               )}
             </>

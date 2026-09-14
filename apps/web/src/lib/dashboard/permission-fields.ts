@@ -33,6 +33,7 @@ export type ReceptionistPermissionKey =
   | 'can_manage_visits'
   | 'can_manage_table_reservations'
   | 'can_manage_menu'
+  | 'can_manage_orders'
 
 export interface PermissionField {
   key:         ReceptionistPermissionKey
@@ -43,6 +44,20 @@ export interface PermissionField {
    * MODULE_VERTICALS; una ruta sin entrada ahí es transversal.
    */
   module:      string
+  /**
+   * Rubros del permiso, SOLO cuando no se pueden derivar de `module`.
+   *
+   * No es una segunda taxonomía: es la excepción para un permiso que gobierna un
+   * KIND vertical-specific dentro de una ruta TRANSVERSAL. El único caso hoy es
+   * can_manage_orders: los pedidos se deciden en /dashboard/requests, que sirve a
+   * los dos rubros porque es la bandeja de todas las solicitudes.
+   *
+   * La alternativa —inventar '/dashboard/orders' en MODULE_VERTICALS solo para
+   * derivar el rubro— sería peor: una ruta que no existe, sin layout ni guard,
+   * declarada como si existiera. Cuando el módulo exista de verdad (C3C), este
+   * campo se borra y el permiso vuelve a derivar de su `module`.
+   */
+  verticals?:  readonly TenantVertical[]
 }
 
 export const PERMISSION_FIELDS: readonly PermissionField[] = [
@@ -105,6 +120,19 @@ export const PERMISSION_FIELDS: readonly PermissionField[] = [
     description: 'Puede crear y editar categorías, productos, precios y disponibilidad del menú',
     module:      '/dashboard/menu',
   },
+  // Fase 3E-C3B0 — despachar pedidos es OPERACIÓN; administrar la carta es una
+  // decisión COMERCIAL. Por eso no cuelga de can_manage_menu.
+  //
+  // Lleva `verticals` explícito: su módulo es /dashboard/requests, que es
+  // transversal, pero el permiso solo gobierna order_request — un kind que solo
+  // existe en gastronomía.
+  {
+    key:         'can_manage_orders',
+    label:       'Gestionar pedidos',
+    description: 'Puede aceptar, rechazar y gestionar pedidos',
+    module:      '/dashboard/requests',
+    verticals:   ['food_service'],
+  },
 ]
 
 export type SavedPermissions = Record<ReceptionistPermissionKey, boolean>
@@ -125,12 +153,19 @@ export function emptyPermissions(): SavedPermissions {
   }, {} as SavedPermissions)
 }
 
-/** Si el permiso pertenece al rubro del tenant. */
+/**
+ * Si el permiso pertenece al rubro del tenant.
+ *
+ * Primero mira `verticals` si el campo lo declara; si no, deriva de
+ * MODULE_VERTICALS a través de su `module`, que es el caso normal. El override
+ * existe solo para permisos que gobiernan un kind vertical-specific dentro de una
+ * ruta transversal — ver PermissionField.verticals.
+ */
 export function permissionBelongsToVertical(
   field: PermissionField,
   vertical: TenantVertical,
 ): boolean {
-  const allowed = verticalsForRoute(field.module)
+  const allowed = field.verticals ?? verticalsForRoute(field.module)
   return allowed === null || allowed.includes(vertical)
 }
 

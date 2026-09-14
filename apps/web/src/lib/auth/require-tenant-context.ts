@@ -20,6 +20,10 @@ export type TenantContext = {
   canManageVisits:         boolean
   canManageTableReservations: boolean
   canManageMenu:           boolean
+  // Fase 3E-C3B0 — aceptar y rechazar pedidos. Independiente de
+  // canManageMenu: administrar la carta es una decisión comercial y despachar
+  // pedidos es operación diaria.
+  canManageOrders:         boolean
   // Fase 3E-C3A1 — el rubro del tenant. Decide qué MÓDULOS existen para este
   // tenant, que es un eje distinto de los permisos de arriba: esos deciden qué
   // puede hacer ESTE USUARIO dentro de un módulo que ya existe.
@@ -169,6 +173,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
         canManageVisits:         false,
         canManageTableReservations: false,
         canManageMenu:           false,
+        canManageOrders:         false,
         vertical:                parseVertical(tenantState.vertical),
         accessMode:              'setup_operator',
       }
@@ -190,6 +195,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
       canManageVisits:         false,
       canManageTableReservations: false,
       canManageMenu:           false,
+      canManageOrders:         false,
       vertical:                saVertical,
       accessMode:              'setup_operator',
     }
@@ -216,6 +222,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
       canManageVisits:         true,
       canManageTableReservations: true,
       canManageMenu:           true,
+      canManageOrders:         true,
       vertical,
       accessMode:              'tenant_user',
     }
@@ -224,7 +231,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
   // Receptionists: fetch granular permissions from DB.
   const { data: perms, error: permsErr } = await supabase
     .from('tenant_users')
-    .select('can_access_settings, can_assign_conversations, can_create_properties, can_confirm_reservations, can_manage_inquiries, can_manage_visits, can_manage_table_reservations, can_manage_menu')
+    .select('can_access_settings, can_assign_conversations, can_create_properties, can_confirm_reservations, can_manage_inquiries, can_manage_visits, can_manage_table_reservations, can_manage_menu, can_manage_orders')
     .eq('id', user.id)
     .eq('tenant_id', claims.tenant_id)
     .maybeSingle()
@@ -246,6 +253,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
     canManageVisits:         perms?.can_manage_visits         ?? false,
     canManageTableReservations: perms?.can_manage_table_reservations ?? false,
     canManageMenu:           perms?.can_manage_menu           ?? false,
+    canManageOrders:         perms?.can_manage_orders         ?? false,
     vertical,
     accessMode:              'tenant_user',
   }

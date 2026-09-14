@@ -9,6 +9,7 @@
 // Consecuencia práctica: si mañana se renombra un campo del formulario, la
 // bandeja lo muestra con el nombre nuevo sin tocar nada acá.
 
+import type { ReceptionistPermissionKey } from '@/lib/dashboard/permission-fields'
 import {
   formIntentSchema,
   getFormDefinition,
@@ -155,6 +156,33 @@ export function requiresScheduling(kind: string): boolean {
  */
 export function requiresTableBooking(kind: string): boolean {
   return kind === 'table_request'
+}
+
+/** true si es un pedido gastronómico (Fase 3E-C3B0). */
+export function isOrder(kind: string): boolean {
+  return kind === 'order_request'
+}
+
+/**
+ * El permiso que exige DECIDIR una solicitud de este kind, o null si el kind
+ * es desconocido.
+ *
+ * Fase 3E-C3B0 — es el mismo CASE que aplica decide_operation_request(), que
+ * sigue siendo la autoridad: acá solo se decide qué botones se dibujan. Para un
+ * kind desconocido devuelve null y la UI no ofrece nada, igual que la RPC, que
+ * en ese caso responde outcome 'unknown_kind'.
+ *
+ * Hasta 3E-C3B0 no había mapa: lo que no fuera consulta, visita o mesa caía
+ * en can_confirm_reservations, que es el permiso del ALQUILER TEMPORAL. Así
+ * un order_request quedaba habilitado por un permiso de otro dominio.
+ */
+export function requiredPermissionForKind(kind: string): ReceptionistPermissionKey | null {
+  if (isInquiry(kind))            return 'can_manage_inquiries'
+  if (requiresScheduling(kind))   return 'can_manage_visits'
+  if (requiresTableBooking(kind)) return 'can_manage_table_reservations'
+  if (isOrder(kind))              return 'can_manage_orders'
+  if (kind === 'reservation_request') return 'can_confirm_reservations'
+  return null
 }
 
 /**

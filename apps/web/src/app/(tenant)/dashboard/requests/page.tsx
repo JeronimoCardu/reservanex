@@ -41,6 +41,9 @@ export default async function RequestsPage({
   const canManageInquiries    = ctx.role === 'owner' || ctx.canManageInquiries
   const canManageVisits       = ctx.role === 'owner' || ctx.canManageVisits
   const canManageTables       = ctx.role === 'owner' || ctx.canManageTableReservations
+  // Fase 3E-C3B0 — los pedidos tienen su propio permiso. Antes caían en
+  // canDecideReservations, que es de alquiler temporal.
+  const canManageOrders       = ctx.role === 'owner' || ctx.canManageOrders
 
   return (
     <div className="flex h-full flex-col">
@@ -58,6 +61,7 @@ export default async function RequestsPage({
         canManageInquiries={canManageInquiries}
         canManageVisits={canManageVisits}
         canManageTables={canManageTables}
+        canManageOrders={canManageOrders}
         activeFilter={filter}
       />
     </div>

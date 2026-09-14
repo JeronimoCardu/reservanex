@@ -9,7 +9,7 @@ import {
   type ReceptionistPermissionKey,
   type SavedPermissions,
 } from './permission-fields'
-import { MODULE_VERTICALS } from './module-verticals'
+import { MODULE_VERTICALS, verticalsForRoute } from './module-verticals'
 import { ALL_NAV_ITEMS } from './nav-items'
 import type { ReceptionistPermissions } from '@/lib/repositories/users.repository'
 
@@ -48,6 +48,9 @@ const SOLO_INMOB: ReceptionistPermissionKey[] = [
 const SOLO_GASTRO: ReceptionistPermissionKey[] = [
   'can_manage_table_reservations',
   'can_manage_menu',
+  // Fase 3E-C3B0 — gastronómico por su override, no por su ruta: vive en
+  // /dashboard/requests, que es transversal.
+  'can_manage_orders',
 ]
 
 /** Todos en false, que es el caso base de una recepcionista nueva. */
@@ -60,6 +63,7 @@ const TODO_FALSE: SavedPermissions = {
   can_manage_visits:             false,
   can_manage_table_reservations: false,
   can_manage_menu:               false,
+  can_manage_orders:             false,
 }
 
 const visibles = (v: TenantVertical, saved: SavedPermissions = TODO_FALSE) =>
@@ -82,7 +86,7 @@ describe('visiblePermissionFields — A. real_estate', () => {
     for (const k of SOLO_GASTRO) expect(vs, k).not.toContain(k)
   })
 
-  it('muestra exactamente 6 de los 8', () => {
+  it('muestra exactamente 6 de los 9', () => {
     expect(visibles(REAL)).toHaveLength(6)
   })
 })
@@ -95,6 +99,7 @@ describe('visiblePermissionFields — B. food_service', () => {
       'can_manage_inquiries',
       'can_manage_table_reservations',
       'can_manage_menu',
+      'can_manage_orders',
     ])
   })
 
@@ -103,8 +108,8 @@ describe('visiblePermissionFields — B. food_service', () => {
     for (const k of SOLO_INMOB) expect(vs, k).not.toContain(k)
   })
 
-  it('muestra exactamente 5 de los 8', () => {
-    expect(visibles(FOOD)).toHaveLength(5)
+  it('muestra exactamente 6 de los 9', () => {
+    expect(visibles(FOOD)).toHaveLength(6)
   })
 })
 
@@ -160,6 +165,49 @@ describe('visiblePermissionFields — C/D. permiso fuera de rubro ya encendido',
   })
 })
 
+describe('G/H/I. can_manage_orders (Fase 3E-C3B0)', () => {
+  const campo = () => PERMISSION_FIELDS.find((f) => f.key === 'can_manage_orders')!
+
+  it('G. un owner food_service ve "Gestionar pedidos"', () => {
+    expect(visibles(FOOD)).toContain('can_manage_orders')
+    expect(campo().label).toBe('Gestionar pedidos')
+    expect(campo().description).toBe('Puede aceptar, rechazar y gestionar pedidos')
+  })
+
+  it('H. un owner real_estate NO lo ve cuando está en false', () => {
+    expect(visibles(REAL)).not.toContain('can_manage_orders')
+  })
+
+  it('I. pero si la fila lo tiene en true, sigue visible para poder revocarlo', () => {
+    const saved: SavedPermissions = { ...TODO_FALSE, can_manage_orders: true }
+    expect(visibles(REAL, saved)).toContain('can_manage_orders')
+  })
+
+  it('I. y una vez apagado y guardado, desaparece', () => {
+    const encendido: SavedPermissions = { ...TODO_FALSE, can_manage_orders: true }
+    expect(visibles(REAL, encendido)).toContain('can_manage_orders')
+    const apagado: SavedPermissions = { ...encendido, can_manage_orders: false }
+    expect(visibles(REAL, apagado)).not.toContain('can_manage_orders')
+  })
+
+  it('es gastronómico por su override, no por su ruta', () => {
+    // /dashboard/requests es transversal: sin `verticals` este permiso se
+    // mostraría en los dos rubros.
+    expect(campo().module).toBe('/dashboard/requests')
+    expect(verticalsForRoute('/dashboard/requests')).toBeNull()
+    expect(campo().verticals).toEqual(['food_service'])
+    expect(permissionBelongsToVertical(campo(), FOOD)).toBe(true)
+    expect(permissionBelongsToVertical(campo(), REAL)).toBe(false)
+  })
+
+  it('no se mezcla con can_manage_menu: son permisos distintos', () => {
+    // Despachar pedidos es operación; la carta es una decisión comercial.
+    const menu = PERMISSION_FIELDS.find((f) => f.key === 'can_manage_menu')!
+    expect(menu.module).toBe('/dashboard/menu')
+    expect(campo().module).not.toBe(menu.module)
+  })
+})
+
 describe('visiblePermissionFields — solo filtra, no muta', () => {
   it('E. no toca el objeto de permisos que recibe', () => {
     const saved: SavedPermissions = { ...TODO_FALSE, can_manage_menu: true }
@@ -191,6 +239,9 @@ describe('la taxonomía de rubros no se duplica', () => {
 
   it('el rubro de cada permiso coincide con el del módulo en MODULE_VERTICALS', () => {
     for (const f of PERMISSION_FIELDS) {
+      // Los que declaran `verticals` son la excepción documentada: su módulo es
+      // transversal pero el permiso no lo es. Se verifican aparte, abajo.
+      if (f.verticals) continue
       const delMapa = (MODULE_VERTICALS as Record<string, readonly TenantVertical[]>)[f.module]
       if (delMapa) {
         // Pertenece exactamente a los rubros que declara el mapa, ni uno más.
@@ -206,10 +257,26 @@ describe('la taxonomía de rubros no se duplica', () => {
     }
   })
 
-  it('las 8 claves están declaradas una sola vez', () => {
+  it('las 9 claves están declaradas una sola vez', () => {
     const keys = PERMISSION_FIELDS.map((f) => f.key)
-    expect(keys).toHaveLength(8)
-    expect(new Set(keys).size).toBe(8)
+    expect(keys).toHaveLength(9)
+    expect(new Set(keys).size).toBe(9)
+  })
+
+  it('el override de rubro es la excepción, no la regla', () => {
+    // Si esto crece, la "excepción" dejó de serlo y conviene revisar el diseño
+    // en vez de seguir agregando overrides.
+    const conOverride = PERMISSION_FIELDS.filter((f) => f.verticals)
+    expect(conOverride.map((f) => f.key)).toEqual(['can_manage_orders'])
+  })
+
+  it('un permiso con override solo se justifica si su módulo es transversal', () => {
+    // Si el módulo YA tuviera rubro propio, el override sería una segunda
+    // taxonomía redundante — justo lo que se quiere evitar.
+    for (const f of PERMISSION_FIELDS) {
+      if (!f.verticals) continue
+      expect(verticalsForRoute(f.module), `${f.key} → ${f.module}`).toBeNull()
+    }
   })
 
   it('las claves del diálogo y las de la base son el mismo conjunto', () => {
