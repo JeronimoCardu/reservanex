@@ -4,9 +4,16 @@ import {
   validateSubmissionPayload,
   isIntentAllowedForVertical,
   tenantVerticalSchema,
+  foodOrderResolvedPayloadSchema,
+  type FoodOrderInput,
 } from '@orderflow/validators'
 import { getPublicTenant } from '@/lib/repositories/public-site.repository'
-import { createSubmission, resolvePublicationContext } from '@/lib/forms/submissions.repository'
+import {
+  createSubmission,
+  findSubmissionByIdempotencyKey,
+  resolvePublicationContext,
+} from '@/lib/forms/submissions.repository'
+import { resolveFoodOrderCart, buildResolvedFoodOrderPayload } from '@/lib/forms/food-order-cart'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -25,6 +32,12 @@ export const dynamic = 'force-dynamic'
 //    solo UX;
 //  · la respuesta jamás devuelve ids internos, tenant_id ni el payload: solo
 //    la referencia pública que el visitante necesita ver.
+// Fase 3E-C3B1 — NO se subió para el carrito. El tope de 25 líneas lo impone el
+// schema, así que un pedido legítimo en el peor caso razonable (25 líneas con
+// 300 caracteres de aclaración cada una, 1000 de observaciones y una dirección
+// al máximo) entra cómodo acá; hay un test que lo mide en vez de suponerlo.
+// Pasarse de 25 líneas es 422 por schema, no 413 por bytes: el mensaje tiene que
+// decir cuál es la regla del producto, no cuánto pesó el request.
 const MAX_BODY_BYTES = 20_000
 
 export async function POST(req: NextRequest) {
@@ -75,13 +88,108 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // ── food_order: resolución canónica del carrito (Fase 3E-C3B1) ───────
+    //
+    // El resto de los intents no pasa por acá: su payload validado ES el que se
+    // guarda. Para un pedido hay un paso más, porque lo que el browser mandó
+    // (item_id + cantidad + expectativa de precio) no es lo que se persiste
+    // (nombre, precio unitario, total de línea, moneda y subtotal, todo leído
+    // del catálogo).
+    let payloadFinal: Record<string, unknown> = validation.data
+
+    if (request.intent === 'food_order') {
+      const input = validation.data as unknown as FoodOrderInput
+
+      // §9 — EL REINTENTO GANA SOBRE EL CATÁLOGO.
+      //
+      // Si esta clave de idempotencia ya creó una submission, se devuelve esa y
+      // se termina acá, SIN mirar precios. El caso concreto: el cliente manda el
+      // pedido, el dueño sube el precio cinco minutos después, y el browser
+      // reintenta exactamente la misma request. Sin este short-circuit
+      // responderíamos price_changed por un pedido que ya existe y ya está
+      // confirmado a otro precio.
+      //
+      // createSubmission vuelve a chequear lo mismo (y el UNIQUE lo garantiza
+      // ante concurrencia): esto es un adelanto del mismo chequeo, no otro.
+      const yaCreada = await findSubmissionByIdempotencyKey(tenant.id, request.idempotency_key)
+      if (yaCreada) {
+        console.log('[forms] submission created', {
+          tenantId:     tenant.id,
+          intent:       request.intent,
+          source:       request.source,
+          reference:    yaCreada.reference,
+          deduplicated: true,
+        })
+        // deduplicated: true va en el CUERPO, no solo en el status. El cliente
+        // necesita el dato y deducirlo de un 200-vs-201 es un contrato implícito.
+        return NextResponse.json(
+          { ok: true, reference: yaCreada.reference, deduplicated: true },
+          { status: 200 },
+        )
+      }
+
+      const resolution = await resolveFoodOrderCart(tenant.id, input.items)
+
+      if (!resolution.ok) {
+        const f = resolution.failure
+
+        if (f.code === 'price_changed') {
+          // 409: no se crea nada. El browser actualiza TODAS las líneas de cada
+          // item_id listado y obliga a revisar antes de reenviar.
+          return NextResponse.json({
+            ok:      false,
+            code:    'price_changed',
+            message: 'Algunos precios cambiaron. Revisá el carrito antes de continuar.',
+            changes: f.changes,
+          }, { status: 409 })
+        }
+
+        if (f.code === 'cart_changed') {
+          // 409: tampoco se crea un pedido parcial ni se quitan líneas en
+          // silencio. El motivo es uno solo a propósito (ver food-order-cart).
+          return NextResponse.json({
+            ok:      false,
+            code:    'cart_changed',
+            message: 'Algunos productos ya no están disponibles. Revisá el carrito.',
+            items:   f.items,
+          }, { status: 409 })
+        }
+
+        if (f.code === 'amount_too_large') {
+          return NextResponse.json({
+            ok:     false,
+            reason: 'invalid_fields',
+            errors: { _form: 'El total del pedido es demasiado grande.' },
+          }, { status: 422 })
+        }
+
+        return NextResponse.json({ ok: false, reason: 'could_not_save' }, { status: 500 })
+      }
+
+      // El payload que se guarda lo arma el servidor campo por campo. El schema
+      // resuelto es .strict(), así que si algo del browser se colara por una
+      // ruta nueva, esto falla acá y no llega a la base.
+      const armado = buildResolvedFoodOrderPayload(input, resolution.cart)
+      const resuelto = foodOrderResolvedPayloadSchema.safeParse(armado)
+
+      if (!resuelto.success) {
+        console.error('[forms] el payload resuelto no valida', {
+          tenantId: tenant.id,
+          issues:   resuelto.error.issues.map((i) => i.path.join('.') || '_form'),
+        })
+        return NextResponse.json({ ok: false, reason: 'could_not_save' }, { status: 500 })
+      }
+
+      payloadFinal = resuelto.data as unknown as Record<string, unknown>
+    }
+
     const context = await resolvePublicationContext(tenant.id, request.publication_ref)
 
     const result = await createSubmission({
       tenantId:       tenant.id,
       intent:         request.intent,
       source:         request.source,
-      payload:        validation.data,
+      payload:        payloadFinal,
       idempotencyKey: request.idempotency_key,
       publicationRef: context.publicationRef,
       entityType:     context.entityType,
@@ -100,9 +208,14 @@ export async function POST(req: NextRequest) {
       deduplicated: result.deduplicated,
     })
 
-    // Solo la referencia pública. Nada de id interno, tenant_id ni payload.
+    // Solo la referencia pública y si fue un reintento. Nada de id interno,
+    // tenant_id ni payload. La forma está fijada por createSubmissionResponseSchema.
     return NextResponse.json(
-      { ok: true, reference: result.submission.reference },
+      {
+        ok:           true,
+        reference:    result.submission.reference,
+        deduplicated: result.deduplicated,
+      },
       { status: result.deduplicated ? 200 : 201 },
     )
   } catch (err) {

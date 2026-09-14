@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { formIntentSchema, getFormDefinition, type FormIntent } from '@orderflow/validators'
-import { buildSummaryLines, isSummaryIntent, SUMMARY_FIELDS, type SummaryIntent } from './submission-summary'
+import {
+  formIntentSchema,
+  getFormDefinition,
+  formatMoneyString as formatMoneyStringReal,
+  type FormIntent,
+} from '@orderflow/validators'
+import {
+  buildSummaryLines,
+  isSummaryIntent,
+  formatMoneyString,
+  SUMMARY_FIELDS,
+  type SummaryIntent,
+} from './submission-summary'
 import { renderSummaryMessage } from './submission-messages'
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -52,6 +63,31 @@ describe('la copia del worker está sincronizada con @orderflow/validators', () 
       for (let i = 0; i < real.length; i++) {
         expect(copia[i]!.options ?? null, `${intent}.${real[i]!.name}`).toEqual(real[i]!.options ?? null)
       }
+    }
+  })
+
+  it('formatMoneyString da EXACTAMENTE lo mismo que el de @orderflow/validators', () => {
+    // Fase 3E-C3B1 — segunda copia standalone del worker, misma defensa que la
+    // tabla de labels: si alguien cambia el formato en validators y no acá, el
+    // cliente vería un total escrito distinto en el sitio y en WhatsApp.
+    const casos: Array<[string, string]> = [
+      ['0.00', 'ARS'],
+      ['0.05', 'ARS'],
+      ['999.99', 'ARS'],
+      ['1000.50', 'ARS'],
+      ['18000.90', 'ARS'],
+      ['20000.00', 'ARS'],
+      ['1234567.89', 'USD'],
+      ['999999999999.99', 'ARS'],
+      ['12500.50', 'EUR'],
+      // No canónicos: los dos tienen que degradar igual, sin inventar formato.
+      ['10000', 'ARS'],
+      ['', 'ARS'],
+      ['x', 'BRL'],
+    ]
+    for (const [valor, moneda] of casos) {
+      expect(formatMoneyString(valor, moneda), `${valor} ${moneda}`)
+        .toBe(formatMoneyStringReal(valor, moneda))
     }
   })
 
@@ -188,5 +224,130 @@ describe('renderSummaryMessage', () => {
     const lines = buildSummaryLines('property_inquiry', { name: 'Ana', message: 'hola' })
     const text = renderSummaryMessage('es', lines)
     expect(text).toBe('Recibí estos datos:\n\nTu nombre: Ana\nTu consulta: hola\n\n¿Es correcto?')
+  })
+})
+
+// ── §19 — el resumen determinístico de un pedido (Fase 3E-C3B1) ────────────
+
+describe('food_order — resumen del pedido', () => {
+  // El payload es el RESUELTO: el que escribió el servidor y quedó congelado.
+  const PEDIDO = {
+    name: 'Ana',
+    fulfillment: 'delivery',
+    address: 'Calle Falsa 123',
+    payment_method: 'cash',
+    notes: 'Tocar timbre',
+    items: [
+      { item_id: 'a', name: 'Muzzarella', quantity: 2, notes: 'sin cebolla',   unit_price: '10000.00', line_total: '20000.00' },
+      { item_id: 'a', name: 'Muzzarella', quantity: 1, notes: 'sin aceitunas', unit_price: '10000.00', line_total: '10000.00' },
+      { item_id: 'b', name: 'Agua 500ml', quantity: 1, unit_price: '2000.00', line_total: '2000.00' },
+    ],
+    currency: 'ARS',
+    subtotal: '32000.00',
+  }
+
+  it('arma el detalle exacto, con las líneas duplicadas SEPARADAS', () => {
+    const lines = buildSummaryLines('food_order', PEDIDO)
+
+    expect(lines[0]).toEqual({
+      label: 'Pedido',
+      block: true,
+      value: [
+        '2 × Muzzarella — ARS 20.000,00',
+        '  sin cebolla',
+        '1 × Muzzarella — ARS 10.000,00',
+        '  sin aceitunas',
+        '1 × Agua 500ml — ARS 2.000,00',
+      ].join('\n'),
+    })
+    expect(lines[1]).toEqual({ label: 'Subtotal', value: 'ARS 32.000,00' })
+  })
+
+  it('el detalle va primero y después los campos del formulario, en su orden', () => {
+    const lines = buildSummaryLines('food_order', PEDIDO)
+    expect(lines.map((l) => l.label)).toEqual([
+      'Pedido',
+      'Subtotal',
+      'Tu nombre',
+      '¿Cómo lo querés recibir?',
+      'Dirección de entrega',
+      'Método de pago',
+      'Observaciones',
+    ])
+  })
+
+  it('NO recalcula: usa los montos del snapshot tal como están', () => {
+    // Un snapshot con un total "imposible" respecto del unitario se imprime
+    // igual. El resumen reproduce la evidencia, no la audita ni la corrige.
+    const raro = {
+      ...PEDIDO,
+      items: [{ item_id: 'a', name: 'Muzzarella', quantity: 3, unit_price: '10000.00', line_total: '11111.11' }],
+      subtotal: '11111.11',
+    }
+    const lines = buildSummaryLines('food_order', raro)
+    expect(lines[0]!.value).toBe('3 × Muzzarella — ARS 11.111,11')
+    expect(lines[1]!.value).toBe('ARS 11.111,11')
+  })
+
+  it('takeaway no imprime dirección (el campo condicional no estaba visible)', () => {
+    const lines = buildSummaryLines('food_order', {
+      ...PEDIDO, fulfillment: 'takeaway', address: undefined,
+    })
+    expect(lines.map((l) => l.label)).not.toContain('Dirección de entrega')
+  })
+
+  it('una línea sin aclaración no agrega renglón vacío', () => {
+    const lines = buildSummaryLines('food_order', {
+      ...PEDIDO,
+      items: [{ item_id: 'b', name: 'Agua 500ml', quantity: 1, unit_price: '2000.00', line_total: '2000.00' }],
+    })
+    expect(lines[0]!.value).toBe('1 × Agua 500ml — ARS 2.000,00')
+  })
+
+  it('la moneda sale del snapshot, no de una constante', () => {
+    const lines = buildSummaryLines('food_order', { ...PEDIDO, currency: 'USD' })
+    expect(lines[0]!.value).toContain('USD 20.000,00')
+    expect(lines[1]!.value).toBe('USD 32.000,00')
+  })
+
+  it('nunca filtra item_id ni claves internas del snapshot', () => {
+    const lines = buildSummaryLines('food_order', {
+      ...PEDIDO,
+      tenant_id: 'tenant-secreto',
+      items: [{ item_id: 'uuid-secreto', name: 'Muzzarella', quantity: 1, unit_price: '10000.00', line_total: '10000.00' }],
+    })
+    const dump = JSON.stringify(lines)
+    expect(dump).not.toContain('uuid-secreto')
+    expect(dump).not.toContain('tenant-secreto')
+  })
+
+  it('un pedido sin items no rompe: imprime lo que tenga', () => {
+    const lines = buildSummaryLines('food_order', {
+      name: 'Ana', fulfillment: 'takeaway', payment_method: 'cash',
+    })
+    expect(lines.map((l) => l.label)).not.toContain('Pedido')
+    expect(lines[0]).toEqual({ label: 'Tu nombre', value: 'Ana' })
+  })
+
+  it('el mensaje completo se lee bien', () => {
+    const text = renderSummaryMessage('es', buildSummaryLines('food_order', PEDIDO))
+    expect(text).toBe([
+      'Recibí estos datos:',
+      '',
+      'Pedido:',
+      '2 × Muzzarella — ARS 20.000,00',
+      '  sin cebolla',
+      '1 × Muzzarella — ARS 10.000,00',
+      '  sin aceitunas',
+      '1 × Agua 500ml — ARS 2.000,00',
+      'Subtotal: ARS 32.000,00',
+      'Tu nombre: Ana',
+      '¿Cómo lo querés recibir?: Delivery',
+      'Dirección de entrega: Calle Falsa 123',
+      'Método de pago: Efectivo',
+      'Observaciones: Tocar timbre',
+      '',
+      '¿Es correcto?',
+    ].join('\n'))
   })
 })

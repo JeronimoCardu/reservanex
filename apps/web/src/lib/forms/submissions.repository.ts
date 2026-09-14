@@ -52,6 +52,36 @@ export function isSubmissionExpired(submission: { expires_at: string }, nowMs = 
   return new Date(submission.expires_at).getTime() <= nowMs
 }
 
+const SUBMISSION_COLUMNS = 'id, reference, intent, status, created_at, expires_at'
+
+/**
+ * La submission que ya existe para esta clave de idempotencia, si la hay.
+ *
+ * Fase 3E-C3B1 — esta búsqueda vivía SOLO adentro de createSubmission, que es
+ * el último paso del pipeline. Para food_order eso no alcanza: resolver el
+ * carrito ocurre ANTES, lee el catálogo, y un reintento de una request ya
+ * aceptada se habría estrellado contra un precio que cambió entretanto
+ * (price_changed) en vez de devolver la submission que ya existe.
+ *
+ * Una operación YA ACEPTADA gana sobre el catálogo mutable. Por eso la
+ * consulta se extrajo acá y la ruta puede hacer short-circuit antes de mirar
+ * precios. createSubmission la sigue usando: la lógica no está duplicada.
+ */
+export async function findSubmissionByIdempotencyKey(
+  tenantId:       string,
+  idempotencyKey: string,
+): Promise<SubmissionRecord | null> {
+  const admin = createAdminClient()
+  const { data } = await admin
+    .from('form_submissions')
+    .select(SUBMISSION_COLUMNS)
+    .eq('tenant_id', tenantId)
+    .eq('idempotency_key', idempotencyKey)
+    .maybeSingle()
+
+  return (data as SubmissionRecord | null) ?? null
+}
+
 export async function createSubmission(params: CreateSubmissionParams): Promise<CreateSubmissionResult> {
   const admin = createAdminClient()
 
@@ -61,15 +91,10 @@ export async function createSubmission(params: CreateSubmissionParams): Promise<
   // devolvemos la MISMA submission en vez de crear otra. Se chequea antes de
   // insertar y además el UNIQUE (tenant_id, idempotency_key) lo garantiza si
   // dos requests corren en paralelo.
-  const { data: existing } = await admin
-    .from('form_submissions')
-    .select('id, reference, intent, status, created_at, expires_at')
-    .eq('tenant_id', params.tenantId)
-    .eq('idempotency_key', params.idempotencyKey)
-    .maybeSingle()
+  const existing = await findSubmissionByIdempotencyKey(params.tenantId, params.idempotencyKey)
 
   if (existing) {
-    return { ok: true, submission: existing as SubmissionRecord, deduplicated: true }
+    return { ok: true, submission: existing, deduplicated: true }
   }
 
   const expiresAt = new Date(Date.now() + SUBMISSION_TTL_MS).toISOString()
@@ -92,7 +117,7 @@ export async function createSubmission(params: CreateSubmissionParams): Promise<
         idempotency_key: params.idempotencyKey,
         expires_at:      expiresAt,
       })
-      .select('id, reference, intent, status, created_at, expires_at')
+      .select(SUBMISSION_COLUMNS)
       .single()
 
     if (!error && data) {
@@ -103,15 +128,10 @@ export async function createSubmission(params: CreateSubmissionParams): Promise<
       // Violación de UNIQUE. Puede ser el código público (reintentamos con
       // otro) o la clave de idempotencia (dos requests en paralelo: la otra
       // ganó, devolvemos la suya).
-      const { data: raced } = await admin
-        .from('form_submissions')
-        .select('id, reference, intent, status, created_at, expires_at')
-        .eq('tenant_id', params.tenantId)
-        .eq('idempotency_key', params.idempotencyKey)
-        .maybeSingle()
+      const raced = await findSubmissionByIdempotencyKey(params.tenantId, params.idempotencyKey)
 
       if (raced) {
-        return { ok: true, submission: raced as SubmissionRecord, deduplicated: true }
+        return { ok: true, submission: raced, deduplicated: true }
       }
       continue // fue colisión de reference: probamos otro código
     }

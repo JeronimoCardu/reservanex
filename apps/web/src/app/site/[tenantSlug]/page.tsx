@@ -1,4 +1,5 @@
 import { notFound }       from 'next/navigation'
+import { randomUUID }     from 'node:crypto'
 import type { Metadata }  from 'next'
 import { tenantVerticalSchema } from '@orderflow/validators'
 import {
@@ -7,6 +8,7 @@ import {
   listPublicMenu,
   listPublicProperties,
   getPublicTenantWhatsApp,
+  getTenantAutoResponderWhatsApp,
 } from '@/lib/repositories/public-site.repository'
 import { publicSiteTitle, publicSiteDescription } from '@/lib/site/public-menu'
 import { CatalogClient }     from '@/components/site/catalog-client'
@@ -87,9 +89,13 @@ export default async function PublicSitePage({ params }: Props) {
   const waPhone = await getPublicTenantWhatsApp(tenant.id)
 
   if (verticalDe(tenant.vertical) === 'food_service') {
-    const [categories, currency] = await Promise.all([
+    const [categories, currency, autoResponderPhone] = await Promise.all([
       listPublicMenu(tenant.id),
       getPublicTenantCurrency(tenant.id),
+      // Fase 3E-C3B1 — a dónde sigue la conversación después de enviar el
+      // pedido. Es la cuenta AutoResponder, que puede no existir: entonces el
+      // formulario muestra la referencia y nada más, nunca un link inventado.
+      getTenantAutoResponderWhatsApp(tenant.id),
     ])
 
     return (
@@ -99,6 +105,10 @@ export default async function PublicSitePage({ params }: Props) {
         currency={currency}
         waPhone={waPhone}
         tenantSlug={tenantSlug}
+        // Una clave por carga de página. El carrito la renueva recién después
+        // de un pedido exitoso, para que los reintentos compartan clave (§9).
+        idempotencyKey={randomUUID()}
+        whatsappNumber={autoResponderPhone}
       />
     )
   }

@@ -302,10 +302,19 @@ export function RequestsClient({
                 {/* Los datos del cliente, legibles — nunca el JSON crudo (§2). */}
                 <dl className="space-y-1.5 text-sm">
                   {buildSnapshotLines(selected.intent, selected.payload_snapshot).map((line) => (
-                    <div key={line.label} className="flex justify-between gap-4">
-                      <dt className="text-muted-foreground">{line.label}</dt>
-                      <dd className="text-right font-medium">{line.value}</dd>
-                    </div>
+                    line.block ? (
+                      // Fase 3E-C3B1 — el detalle de un pedido son varios
+                      // renglones: va debajo del label y conserva los saltos.
+                      <div key={line.label} className="flex flex-col gap-1">
+                        <dt className="text-muted-foreground">{line.label}</dt>
+                        <dd className="whitespace-pre-line font-medium tabular-nums">{line.value}</dd>
+                      </div>
+                    ) : (
+                      <div key={line.label} className="flex justify-between gap-4">
+                        <dt className="text-muted-foreground">{line.label}</dt>
+                        <dd className="text-right font-medium">{line.value}</dd>
+                      </div>
+                    )
                   ))}
                 </dl>
 

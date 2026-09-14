@@ -1,11 +1,15 @@
 'use client'
 
+import { useRef, useState } from 'react'
 import Image from 'next/image'
-import { UtensilsCrossedIcon } from 'lucide-react'
-import type { PublicTenant, PublicMenuCategory } from '@/lib/repositories/public-site.repository'
+import { UtensilsCrossedIcon, PlusIcon, ShoppingBagIcon } from 'lucide-react'
+import { formatMoneyString } from '@orderflow/validators'
+import type { PublicTenant, PublicMenuCategory, PublicMenuItem } from '@/lib/repositories/public-site.repository'
 import { formatPublicPrice } from '@/lib/site/public-menu'
+import { addToCart, cartCount, cartSubtotal, type CartLine } from '@/lib/site/cart'
 import { PublicSiteHeader } from './public-site-header'
 import { PublicSiteFooter } from './public-site-footer'
+import { CartSheet } from './cart-sheet'
 
 // Fase 3E-C3A2 — la carta pública de un tenant gastronómico.
 //
@@ -14,11 +18,15 @@ import { PublicSiteFooter } from './public-site-footer'
 // propiedades y una carta se leen distinto —tarjetas grandes con filtros contra
 // secciones con renglones— pero el marco es el mismo sitio.
 //
-// ── LO QUE NO HACE ──────────────────────────────────────────────────────────
+// ── EL CARRITO (Fase 3E-C3B1) ───────────────────────────────────────────────
 //
-// Sin carrito, sin cantidades, sin botón "Agregar". Esta fase publica la carta;
-// pedir llega después. El CTA de WhatsApp del header es el que ya tenía el sitio
-// y no se tocó.
+// El estado del carrito vive ACÁ, en useState, y nada más: sin localStorage, sin
+// sessionStorage y sin ruta propia. Recargar la página lo pierde, y está
+// asumido para V1 — persistirlo abre preguntas (¿cuánto dura?, ¿qué pasa si
+// entretanto cambió el precio?) que esta fase no va a responder a medias.
+//
+// Las REGLAS del carrito no están en este archivo: viven en @/lib/site/cart,
+// puras y con tests. Acá solo se dibuja y se guarda el resultado.
 
 function Foto({ url, alt }: { url: string | null; alt: string }) {
   // Proporción fija y tamaño declarado en las dos ramas: así la fila ocupa
@@ -52,15 +60,48 @@ export function PublicMenuClient({
   currency,
   waPhone,
   tenantSlug,
+  idempotencyKey,
+  whatsappNumber,
 }: {
-  tenant:     PublicTenant
-  categories: PublicMenuCategory[]
-  currency:   string
-  waPhone:    string | null
-  tenantSlug: string
+  tenant:         PublicTenant
+  categories:     PublicMenuCategory[]
+  currency:       string
+  waPhone:        string | null
+  tenantSlug:     string
+  idempotencyKey: string
+  whatsappNumber: string | null
 }) {
   const nombre = tenant.public_name ?? tenant.name
   const total  = categories.reduce((n, c) => n + c.items.length, 0)
+
+  const [lines, setLines] = useState<CartLine[]>([])
+  const [abierto, setAbierto] = useState(false)
+  const [aviso, setAviso] = useState<string | null>(null)
+
+  // Contador para client_line_id. Un contador y no un uuid: es identidad LOCAL
+  // de React, no se manda a ningún lado, y así addToCart/duplicateLine siguen
+  // siendo funciones puras que se pueden testear sin mockear nada.
+  const contador = useRef(0)
+  const nextLineId = () => `cl-${++contador.current}`
+
+  const unidades = cartCount(lines)
+  const subtotal = cartSubtotal(lines) ?? '0.00'
+
+  function agregar(item: PublicMenuItem) {
+    const r = addToCart(lines, { id: item.id, name: item.name, base_price: item.base_price, available: item.available }, nextLineId())
+    if (r.ok) {
+      setLines(r.lines)
+      setAviso(null)
+      return
+    }
+    setAviso(
+      r.reason === 'unavailable'
+        ? 'Ese producto no está disponible en este momento.'
+        : r.reason === 'cart_full'
+          ? 'El pedido llegó al máximo. Revisalo antes de agregar más.'
+          : 'No pudimos agregar ese producto.',
+    )
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-white">
@@ -125,11 +166,28 @@ export function PublicMenuClient({
                           </p>
                         )}
 
-                        {!item.available && (
-                          <span className="mt-1.5 inline-flex w-fit items-center rounded-full border border-zinc-300 bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-700">
-                            No disponible
-                          </span>
-                        )}
+                        <div className="mt-1.5 flex items-center gap-2">
+                          {!item.available && (
+                            <span className="inline-flex w-fit items-center rounded-full border border-zinc-300 bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-700">
+                              No disponible
+                            </span>
+                          )}
+
+                          {/* §12 — un producto sin disponibilidad se sigue
+                              mostrando con su precio, pero NO se puede agregar.
+                              El botón queda deshabilitado en vez de
+                              desaparecer: así se ve que existe y que hoy no. */}
+                          <button
+                            type="button"
+                            disabled={!item.available}
+                            onClick={() => agregar(item)}
+                            aria-label={`Agregar ${item.name} al pedido`}
+                            className="ml-auto inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-400 enabled:border-zinc-300 enabled:text-zinc-800 enabled:hover:bg-zinc-100"
+                          >
+                            <PlusIcon className="h-3.5 w-3.5" />
+                            Agregar
+                          </button>
+                        </div>
                       </div>
                     </li>
                   ))}
@@ -139,6 +197,45 @@ export function PublicMenuClient({
           </div>
         )}
       </main>
+
+      {aviso && (
+        <p
+          role="alert"
+          className="fixed inset-x-0 bottom-24 z-40 mx-auto w-[min(92%,32rem)] rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-center text-sm text-amber-800 shadow-lg"
+        >
+          {aviso}
+        </p>
+      )}
+
+      {/* ── Barra del pedido ── */}
+      {lines.length > 0 && (
+        <div className="sticky bottom-0 z-30 border-t bg-white/95 px-4 py-3 backdrop-blur">
+          <button
+            type="button"
+            onClick={() => setAbierto(true)}
+            className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 rounded-xl px-4 py-3.5 text-base font-medium text-white shadow-sm transition"
+            style={{ background: 'var(--tenant-primary, #0F766E)' }}
+          >
+            <span className="inline-flex items-center gap-2">
+              <ShoppingBagIcon className="h-5 w-5" />
+              Ver pedido ({unidades})
+            </span>
+            <span className="tabular-nums">{formatMoneyString(subtotal, currency)}</span>
+          </button>
+        </div>
+      )}
+
+      <CartSheet
+        open={abierto}
+        onClose={() => setAbierto(false)}
+        lines={lines}
+        onLines={setLines}
+        currency={currency}
+        tenantSlug={tenantSlug}
+        idempotencyKey={idempotencyKey}
+        whatsappNumber={whatsappNumber}
+        nextLineId={nextLineId}
+      />
 
       <PublicSiteFooter tenant={tenant} />
     </div>

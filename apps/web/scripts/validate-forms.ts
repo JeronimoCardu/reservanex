@@ -261,13 +261,31 @@ async function main() {
       }
     }
     {
+      // Fase 3E-C3B1 — food_order ahora exige carrito. El item_id no necesita
+      // existir: el refine de la dirección corre en el SCHEMA, antes de que el
+      // servidor mire el catálogo. Lo que se prueba sigue siendo el condicional.
+      const carrito = [{
+        item_id: randomUUID(), quantity: 1, expected_unit_price: '10000.00',
+      }]
       const { status, json } = await postForm({
         tenant_slug: FOOD.slug, intent: 'food_order', source: 'public_site',
         idempotency_key: randomUUID(),
-        payload: { name: 'Ana', fulfillment: 'delivery', payment_method: 'cash' },
+        payload: { name: 'Ana', fulfillment: 'delivery', payment_method: 'cash', items: carrito },
       })
       if (status === 422 && json?.errors?.address) ok('E. delivery sin dirección → 422 con el error en address')
       else nok('E. no se exigió la dirección en un delivery', `status=${status} body=${JSON.stringify(json)}`)
+
+      // Y un pedido SIN carrito tampoco pasa: es el contrato nuevo.
+      const sinCarrito = await postForm({
+        tenant_slug: FOOD.slug, intent: 'food_order', source: 'public_site',
+        idempotency_key: randomUUID(),
+        payload: { name: 'Ana', fulfillment: 'takeaway', payment_method: 'cash' },
+      })
+      if (sinCarrito.status === 422 && sinCarrito.json?.errors?.items) {
+        ok('E. un pedido sin productos → 422 con el error en items (3E-C3B1)')
+      } else {
+        nok('E. se aceptó un pedido sin productos', `status=${sinCarrito.status} body=${JSON.stringify(sinCarrito.json)}`)
+      }
     }
     {
       const { status, json } = await postForm({

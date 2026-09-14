@@ -142,6 +142,81 @@ function formatValue(field: SummaryField, raw: unknown): string | null {
 export interface SubmissionSummaryLine {
   label: string
   value: string
+  /**
+   * El valor ocupa varias líneas y va DEBAJO del label, no al lado.
+   *
+   * Fase 3E-C3B1 — lo necesita el detalle del pedido: "Pedido: 2 × Muzzarella…"
+   * en un solo renglón es ilegible en cuanto hay más de un producto.
+   */
+  block?: boolean
+}
+
+// ── Plata (Fase 3E-C3B1) ────────────────────────────────────────────────────
+//
+// COPIA STANDALONE de formatMoneyString() de packages/validators/src/money.ts,
+// por la misma razón que la tabla de labels de arriba: el worker no tiene
+// dependencias de workspace en runtime. submission-summary.test.ts compara las
+// dos implementaciones sobre una tabla de casos, así que no pueden divergir.
+//
+// Es manipulación de string pura y NO usa Intl a propósito: el formato del
+// resumen no puede depender del ICU que traiga el runtime del worker.
+const MONEY_STRING_PATTERN = /^\d{1,12}\.\d{2}$/
+
+export function formatMoneyString(value: string, currency: string): string {
+  if (typeof value !== 'string' || !MONEY_STRING_PATTERN.test(value)) {
+    return `${currency} ${value}`
+  }
+  const punto     = value.indexOf('.')
+  const enteros   = value.slice(0, punto)
+  const decimales = value.slice(punto + 1)
+  const agrupado  = enteros.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  return `${currency} ${agrupado},${decimales}`
+}
+
+// ── El detalle del pedido ───────────────────────────────────────────────────
+//
+// §10 sigue mandando: NO se recalcula nada. unit_price, line_total, subtotal y
+// currency salen del snapshot que escribió el servidor cuando se creó la
+// submission. El catálogo no se vuelve a consultar ni acá ni en la confirmación
+// — si mañana sube el precio, este mensaje sigue diciendo lo que el cliente
+// aceptó.
+//
+// Las líneas duplicadas del mismo producto se muestran SEPARADAS, con su
+// aclaración debajo: consolidarlas perdería justamente lo que las distingue.
+interface LineaPedido {
+  name?:       unknown
+  quantity?:   unknown
+  notes?:      unknown
+  line_total?: unknown
+}
+
+function renderCartBlock(payload: Record<string, unknown>): string | null {
+  const items = payload.items
+  if (!Array.isArray(items) || items.length === 0) return null
+
+  const currency = typeof payload.currency === 'string' ? payload.currency : ''
+  const renglones: string[] = []
+
+  for (const crudo of items as LineaPedido[]) {
+    const nombre = typeof crudo?.name === 'string' ? crudo.name.trim() : ''
+    if (!nombre) continue
+
+    const cantidad = typeof crudo.quantity === 'number' ? crudo.quantity : Number(crudo.quantity)
+    const total    = typeof crudo.line_total === 'string' ? crudo.line_total : ''
+
+    renglones.push(
+      total
+        ? `${cantidad} × ${nombre} — ${formatMoneyString(total, currency)}`
+        : `${cantidad} × ${nombre}`,
+    )
+
+    // La aclaración va TAL CUAL la escribió el cliente: ni recortada ni
+    // recapitalizada. Es el texto que tiene que poder verificar.
+    const nota = typeof crudo.notes === 'string' ? crudo.notes.trim() : ''
+    if (nota) renglones.push(`  ${nota}`)
+  }
+
+  return renglones.length > 0 ? renglones.join('\n') : null
 }
 
 // Devuelve las líneas del resumen, en el orden en que el cliente completó el
@@ -153,6 +228,17 @@ export function buildSummaryLines(
   payload: Record<string, unknown>,
 ): SubmissionSummaryLine[] {
   const lines: SubmissionSummaryLine[] = []
+
+  // El pedido va PRIMERO: es lo que la persona tiene que verificar. Los datos
+  // de contacto y entrega van después, en el orden del formulario.
+  if (intent === 'food_order') {
+    const bloque = renderCartBlock(payload)
+    if (bloque) lines.push({ label: 'Pedido', value: bloque, block: true })
+
+    const currency = typeof payload.currency === 'string' ? payload.currency : ''
+    const subtotal = typeof payload.subtotal === 'string' ? payload.subtotal : ''
+    if (subtotal) lines.push({ label: 'Subtotal', value: formatMoneyString(subtotal, currency) })
+  }
 
   for (const field of SUMMARY_FIELDS[intent]) {
     if (!isVisible(field, payload)) continue

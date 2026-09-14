@@ -1,12 +1,13 @@
 /**
- * Fase 3E-C3A2 §24 — escenario para la prueba de navegador del menú.
+ * Fase 3E-C3A2 §24 / 3E-C3B1 §25 — escenario para la prueba de navegador.
  *
  * Crea un tenant food_service descartable con su owner, una recepcionista y una
  * carta pensada para ejercitar TODOS los casos que el sitio público distingue:
  *
  *   Pizzas   (activa)    Muzzarella        publicado · disponible · CON foto
- *                        Napolitana        publicado · NO disponible · sin foto
- *                        Fugazzeta         BORRADOR  → no debe verse en público
+ *                        Napolitana        publicado · disponible · sin foto
+ *                        Fugazzeta         publicado · NO disponible → "Agregar" gris
+ *                        Calabresa         BORRADOR  → no debe verse en público
  *   Bebidas  (activa)    Agua 500ml        publicado · disponible · CON foto
  *                        Gaseosa 1.5L      publicado · disponible · sin foto
  *   Entradas (activa)    Pan de cortesía   publicado · disponible · precio 0
@@ -14,6 +15,11 @@
  *
  * Las fotos son un PNG de color generado acá: es un marcador de posición
  * honesto, no una foto de stock bajada de ningún lado.
+ *
+ * Fase 3E-C3B1 (fix): también deja una cuenta AutoResponder de PLACEHOLDER, con
+ * un número inventado que no recibe mensajes. Sin ninguna cuenta, la pantalla de
+ * éxito del pedido muestra el estado controlado en vez del CTA de WhatsApp, y la
+ * prueba manual no puede verificar el link.
  *
  * SOBRE LA CONTRASEÑA: el script NO inventa ni imprime ninguna.
  *
@@ -102,9 +108,15 @@ const CARTA: { categoria: string; activa: boolean; items: ItemSeed[] }[] = [
   {
     categoria: 'Pizzas', activa: true,
     items: [
-      { nombre: 'Muzzarella', descripcion: 'Salsa de tomate, muzzarella y orégano.', precio: '10000.00', publicado: true,  disponible: true,  color: [217, 119, 66] },
-      { nombre: 'Napolitana', descripcion: 'Muzzarella, tomate en rodajas y ajo.',    precio: '12500.50', publicado: true,  disponible: false, color: null },
-      { nombre: 'Fugazzeta',  descripcion: 'Cebolla y muzzarella. Todavía en prueba.', precio: '13000.00', publicado: false, disponible: true,  color: null },
+      { nombre: 'Muzzarella', descripcion: 'Salsa de tomate, muzzarella y orégano.',   precio: '10000.00', publicado: true,  disponible: true,  color: [217, 119, 66] },
+      { nombre: 'Napolitana', descripcion: 'Muzzarella, tomate en rodajas y ajo.',     precio: '12500.50', publicado: true,  disponible: true,  color: null },
+      // Fase 3E-C3B1 — el NO disponible ahora es Fugazzeta, y va PUBLICADO: hace
+      // falta que se VEA en la carta para poder comprobar que su botón "Agregar"
+      // está deshabilitado. Un borrador no se ve, así que no sirve para ese caso.
+      { nombre: 'Fugazzeta',  descripcion: 'Cebolla y muzzarella.',                    precio: '13000.00', publicado: true,  disponible: false, color: null },
+      // El borrador se conserva en su propio producto: sigue haciendo falta para
+      // comprobar que un no publicado NO aparece en público.
+      { nombre: 'Calabresa',  descripcion: 'Longaniza y morrón. Todavía en prueba.',   precio: '13500.00', publicado: false, disponible: true,  color: null },
     ],
   },
   {
@@ -190,7 +202,7 @@ async function main() {
       }
 
       // Orden importante: items antes que categorías (ON DELETE RESTRICT).
-      for (const tb of ['menu_items', 'menu_categories', 'table_reservations', 'operation_requests', 'notes', 'tasks'] as const) {
+      for (const tb of ['menu_items', 'menu_categories', 'table_reservations', 'operation_requests', 'notes', 'tasks', 'whatsapp_accounts'] as const) {
         const { count, error } = await admin.from(tb).delete({ count: 'exact' }).eq('tenant_id', existente.id)
         if (error) console.error(`  ✗ ${tb}: ${error.message}`)
         else if ((count ?? 0) > 0) console.log(`  ✓ ${tb}: ${count}`)
@@ -286,6 +298,17 @@ async function main() {
     } as never).eq('id', tenantId)
     console.log('  ya existe el tenant de fixture; se reutiliza')
   }
+
+  // ── Cuenta de WhatsApp ───────────────────────────────────────────────────
+  //
+  // El fixture NO la crea. Una cuenta 'autoresponder' exige inbound_token_hash
+  // (CHECK whatsapp_accounts_provider_fields_check), o sea el hash de un token
+  // de dispositivo: una credencial. Inventarla acá sería fabricar un secreto, y
+  // ya existe el camino correcto —seed:autoresponder, que lee el token de env y
+  // nunca lo imprime—. Ver el aviso al final de la salida.
+  const { count: cuentasWa } = await admin.from('whatsapp_accounts')
+    .select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId)
+  const sinWhatsApp = (cuentasWa ?? 0) === 0
 
   /** Crea el usuario si falta. NUNCA genera ni imprime una contraseña. */
   async function asegurarUsuario(
@@ -397,16 +420,73 @@ async function main() {
     console.log(HR)
   }
 
-  console.log('  QUÉ PROBAR')
+  console.log('  QUÉ PROBAR — la carta (3E-C3A1 / C3A2)')
   console.log('    /dashboard/menu          subir foto · reemplazar · quitar (menú ⋯)')
-  console.log('                             la grilla sigue igual: buscar, filtrar, editar, guardar')
+  console.log('                             la grilla: buscar, filtrar, editar, guardar')
   console.log(`    /site/${SLUG}   la carta pública`)
   console.log('                             Pizzas · Bebidas · Entradas  (Postres NO: categoría inactiva)')
-  console.log('                             Napolitana aparece atenuada y "No disponible"')
-  console.log('                             Fugazzeta NO aparece: es borrador')
+  console.log('                             Fugazzeta aparece atenuada y "No disponible"')
+  console.log('                             Calabresa NO aparece: es borrador')
   console.log('                             Pan de cortesía dice "Gratis"')
   console.log('    /site/demo-autoresponder el sitio inmobiliario, sin cambios')
   console.log(HR)
+  console.log('  QUÉ PROBAR — el pedido (3E-C3B1)')
+  console.log(`    /site/${SLUG}`)
+  console.log('    1. Agregar        "Agregar" en Muzzarella. Tocar de nuevo: sube a 2,')
+  console.log('                      NO crea una segunda línea.')
+  console.log('    2. No disponible  el botón de Fugazzeta está deshabilitado.')
+  console.log('    3. Ver pedido     la barra de abajo muestra unidades y subtotal.')
+  console.log('    4. Líneas         escribir "sin cebolla" en la línea de Muzzarella,')
+  console.log('                      tocar "Otra línea" y escribir "sin aceitunas".')
+  console.log('                      Quedan DOS líneas del mismo producto.')
+  console.log('    5. Subtotal       agregar Napolitana (12.500,50) y verificar la suma.')
+  console.log('    6. Continuar      el checkout aparece en el MISMO panel, sin cambiar de URL.')
+  console.log('    7. Delivery       elegir Delivery: aparece Dirección. Volver a Retiro:')
+  console.log('                      desaparece y se limpia.')
+  console.log('    8. Enviar         el panel pasa a "¡Recibimos tu pedido!" SIN cerrarse')
+  console.log('                      y muestra SUB-XXXXXX.')
+  console.log('                      Con cuenta de WhatsApp: botón verde "Confirmar por')
+  console.log('                      WhatsApp", y el link lleva esa misma referencia.')
+  console.log('                      Sin cuenta: el aviso "Guardá esa referencia".')
+  console.log('                      [Cerrar] vuelve al menú con el carrito ya vacío.')
+  console.log('')
+  console.log('    9. PRECIO CAMBIADO — el caso que importa:')
+  console.log('       a) armar un carrito con Muzzarella y NO enviarlo;')
+  console.log('       b) en otra pestaña, /dashboard/menu → cambiarle el precio → Guardar;')
+  console.log('       c) volver al carrito y Enviar.')
+  console.log('       Esperado: NO se crea el pedido. Vuelve al carrito con')
+  console.log('       "Algunos precios cambiaron...", el precio y el subtotal ya')
+  console.log('       actualizados, y hay que tocar Enviar de nuevo a mano.')
+  console.log('')
+  console.log('   10. PRODUCTO CAÍDO — mismo procedimiento, pero marcando el producto')
+  console.log('       como no disponible (o despublicándolo) en b).')
+  console.log('       Esperado: "Algunos productos ya no están disponibles",')
+  console.log('       la línea queda marcada en rojo y NO se quita sola.')
+  console.log('')
+  console.log(`   11. La comanda ya enviada: /dashboard/requests → la solicitud de tipo`)
+  console.log('       Pedido muestra el detalle con las dos líneas y el subtotal')
+  console.log('       CONGELADOS, aunque el precio del catálogo haya cambiado.')
+  console.log(HR)
+  if (sinWhatsApp) {
+    console.log('  CTA DE WHATSAPP — este tenant NO tiene cuenta de WhatsApp.')
+    console.log('')
+    console.log('  Sin cuenta activa, la pantalla de éxito del pedido muestra el estado')
+    console.log('  controlado ("Guardá esa referencia…") en vez del botón verde. Es el')
+    console.log('  comportamiento correcto —nunca se inventa un número— pero esconde el CTA.')
+    console.log('')
+    console.log('  Para ver el CTA en la prueba manual, registrá una cuenta con el camino')
+    console.log('  de siempre (lee el token de env y NO lo imprime):')
+    console.log('')
+    console.log(`    AUTORESPONDER_TENANT_ID=${tenantId} \\`)
+    console.log('    AUTORESPONDER_PHONE_NUMBER=<numero> \\')
+    console.log('    AUTORESPONDER_DEVICE_TOKEN=<token> \\')
+    console.log('      pnpm --filter @orderflow/worker seed:autoresponder')
+    console.log('')
+    console.log('  El fixture NO la crea solo: exige inbound_token_hash, que es una')
+    console.log('  credencial, y este script no fabrica secretos.')
+    console.log(HR)
+  }
+
   console.log(antes === despues
     ? '  ✓ evidencia histórica y tenant inmobiliario intactos'
     : '  ✗ ALGO DEL TENANT INMOBILIARIO CAMBIÓ')

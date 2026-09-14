@@ -244,11 +244,71 @@ describe('Q–X. los filtros de la carta pública están en el repositorio', () 
   })
 })
 
-describe('la carta pública no adelanta el carrito', () => {
-  it('no hay cantidades ni botón de agregar', () => {
-    const client = soloCodigo(leer('components', 'site', 'public-menu-client.tsx')).toLowerCase()
-    for (const prohibido of ['agregar', 'carrito', 'cantidad', 'quantity', 'addtocart']) {
-      expect(client, prohibido).not.toContain(prohibido)
+// Fase 3E-C3B1 — este bloque decía "la carta pública no adelanta el carrito" y
+// verificaba que NO existieran ni "agregar" ni "cantidad" en el cliente. Esa era
+// la invariante de C3A2, y C3B1 la deroga a propósito: ahora hay carrito. Lo que
+// queda son las invariantes NUEVAS, que son las que importan de acá en adelante.
+describe('la carta pública con carrito (§12, §14, §45)', () => {
+  it('§12 — un producto no disponible NO se puede agregar', () => {
+    const client = leer('components', 'site', 'public-menu-client.tsx')
+    expect(client).toContain('disabled={!item.available}')
+    // Y la regla real vive en lib/site/cart, no en el componente.
+    expect(soloCodigo(leer('lib', 'site', 'cart.ts')))
+      .toContain("if (!item.available) return { ok: false, reason: 'unavailable' }")
+  })
+
+  it('§12 — el carrito NO se persiste: ni localStorage ni sessionStorage', () => {
+    for (const archivo of [
+      leer('components', 'site', 'public-menu-client.tsx'),
+      leer('components', 'site', 'cart-sheet.tsx'),
+      leer('lib', 'site', 'cart.ts'),
+    ]) {
+      const codigo = soloCodigo(archivo)
+      expect(codigo).not.toContain('localStorage')
+      expect(codigo).not.toContain('sessionStorage')
+      expect(codigo).not.toContain('indexedDB')
+    }
+  })
+
+  it('§45 — no existe una ruta /pedido: el checkout es la misma página', () => {
+    const ruta = path.join(SRC, 'app', 'site', '[tenantSlug]', 'pedido')
+    expect(fs.existsSync(ruta)).toBe(false)
+
+    // El sheet se monta desde la propia carta.
+    expect(leer('components', 'site', 'public-menu-client.tsx')).toContain('<CartSheet')
+  })
+
+  it('§14 — el checkout reutiliza DynamicForm, no un formulario propio', () => {
+    const sheet = leer('components', 'site', 'cart-sheet.tsx')
+    expect(sheet).toContain('<DynamicForm')
+    expect(sheet).toContain("intent=\"food_order\"")
+    // Los cinco campos NO se reimplementan acá.
+    const codigo = soloCodigo(sheet)
+    for (const campo of ['payment_method', 'fulfillment', 'takeaway']) {
+      expect(codigo, campo).not.toContain(campo)
+    }
+  })
+
+  it('§15 — DynamicForm no sabe qué es un carrito', () => {
+    const codigo = soloCodigo(leer('components', 'site', 'dynamic-form.tsx')).toLowerCase()
+    for (const prohibido of ['carrito', 'cart', 'item_id', 'unit_price', 'subtotal', 'food_order']) {
+      expect(codigo, prohibido).not.toContain(prohibido)
+    }
+    // Solo los tres ganchos genéricos.
+    const crudo = leer('components', 'site', 'dynamic-form.tsx')
+    expect(crudo).toContain('extraPayload')
+    expect(crudo).toContain('onStructuredError')
+  })
+
+  it('§16 — el browser no manda subtotal: solo expected_unit_price', () => {
+    const codigo = soloCodigo(leer('lib', 'site', 'cart.ts'))
+    expect(codigo).toContain('expected_unit_price: l.unit_price')
+    // toApiItems no emite ninguno de los campos que resuelve el servidor.
+    const bloque = codigo.slice(codigo.indexOf('export function toApiItems'))
+    const fin = bloque.indexOf('\n}')
+    const cuerpo = bloque.slice(0, fin)
+    for (const prohibido of ['client_line_id', 'line_total', 'currency', 'subtotal']) {
+      expect(cuerpo, prohibido).not.toContain(prohibido)
     }
   })
 

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { moneyStringSchema } from './money'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Fase 3A — Motor de formularios dinámicos.
@@ -377,29 +378,127 @@ const generalInquiryPayload = z.object({
   message: z.string().trim().min(1, 'Escribinos tu consulta.').max(1000),
 })
 
-const foodOrderPayload = z.object({
+// ── Pedido gastronómico (Fase 3E-C3B1) ─────────────────────────────────────
+//
+// DOS contratos, no uno. Lo que el browser PUEDE mandar y lo que el servidor
+// GUARDA son cosas distintas, y el día que se confundan el browser va a estar
+// fijando precios.
+//
+//   foodOrderInputSchema            lo que entra por /api/public/forms
+//   foodOrderResolvedPayloadSchema  lo único que se persiste
+//
+// Los dos son .strict(): una clave de más es 422, no un campo ignorado en
+// silencio. Zod por defecto DESCARTA las claves desconocidas, que para este caso
+// sería lo peor de los dos mundos — el browser creería que mandó un unit_price y
+// nadie le diría que no.
+
+/** Tope de líneas del carrito. Decisión de producto, no límite técnico. */
+export const MAX_CART_LINES = 25
+
+// Campos comunes a los dos contratos. Se declaran una sola vez para que el
+// resuelto no pueda aceptar un `name` distinto del que validó la entrada.
+const foodOrderCommonFields = {
   name:           nameValue,
   fulfillment:    z.enum(['delivery', 'takeaway']),
   address:        z.string().trim().max(300).optional(),
   payment_method: z.enum(['cash', 'transfer', 'card']),
   notes:          notesValue,
-  // Todavía sin carrito (Fase 3A). La forma queda aceptada para que 3B+ pueda
-  // empezar a mandar items sin migrar el schema ni la tabla.
-  items: z.array(z.object({
-    name:     z.string().trim().min(1).max(200),
-    quantity: z.coerce.number().int().min(1).max(99),
-    variant:  z.string().trim().max(120).optional(),
-    notes:    z.string().trim().max(300).optional(),
-  })).max(100).optional(),
-})
-  .refine((v) => v.fulfillment !== 'delivery' || (v.address && v.address.length > 0), {
-    message: 'Necesitamos la dirección para el delivery.',
-    path:    ['address'],
-  })
-  .refine((v) => v.fulfillment === 'delivery' || !v.address, {
-    message: 'No corresponde una dirección para retiro en el local.',
-    path:    ['address'],
-  })
+}
+
+// delivery exige dirección; takeaway la prohíbe. Un campo condicional que el
+// formulario nunca mostró no puede llegar igual por el body.
+type ConFulfillment = { fulfillment: string; address?: string }
+
+function refinarFulfillment<Out extends ConFulfillment, In>(
+  schema: z.ZodType<Out, z.ZodTypeDef, In>,
+) {
+  return schema
+    .refine((v) => v.fulfillment !== 'delivery' || (v.address !== undefined && v.address.length > 0), {
+      message: 'Necesitamos la dirección para el delivery.',
+      path:    ['address'],
+    })
+    .refine((v) => v.fulfillment === 'delivery' || !v.address, {
+      message: 'No corresponde una dirección para retiro en el local.',
+      path:    ['address'],
+    })
+}
+
+// ── Entrada del browser ────────────────────────────────────────────────────
+//
+// El MISMO item_id puede repetirse en varias líneas: una hamburguesa sin cebolla
+// y otra sin tomate son dos pedidos distintos del mismo producto. NO hay unique
+// y el servidor NO consolida.
+//
+// expected_unit_price es una PRECONDICIÓN OPTIMISTA, no una autoridad: el
+// servidor relee menu_items.base_price y, si no coincide, rechaza con 409. Se
+// acepta en la entrada justamente para poder detectar que el precio cambió
+// mientras el cliente tenía el carrito abierto.
+export const foodOrderInputLineSchema = z.object({
+  item_id: z.string({ required_error: 'Falta el producto.' }).uuid('Producto inválido.'),
+  // Sin z.coerce: el carrito lo arma nuestro propio cliente en JSON, no un
+  // <input> que produce strings. Un '2' acá sería señal de que alguien está
+  // construyendo el body a mano.
+  quantity: z
+    .number({ required_error: 'Falta la cantidad.', invalid_type_error: 'Cantidad inválida.' })
+    .int('La cantidad tiene que ser un número entero.')
+    .min(1, 'La cantidad mínima es 1.')
+    .max(99, 'La cantidad máxima por línea es 99.'),
+  notes: z.string().trim().max(300, 'La aclaración es demasiado larga.').optional(),
+  expected_unit_price: moneyStringSchema,
+}).strict()
+
+export const foodOrderInputSchema = refinarFulfillment(
+  z.object({
+    ...foodOrderCommonFields,
+    items: z
+      .array(foodOrderInputLineSchema)
+      .min(1, 'El pedido no tiene productos.')
+      .max(MAX_CART_LINES, `Como máximo ${MAX_CART_LINES} líneas por pedido.`),
+  }).strict(),
+)
+
+// ── Payload resuelto ───────────────────────────────────────────────────────
+//
+// Lo que efectivamente se guarda en form_submissions.payload y de ahí viaja, sin
+// tocarse, a operation_requests.payload_snapshot. Todo acá lo escribió el
+// servidor leyendo el catálogo.
+//
+// expected_unit_price NO está: era una precondición de concurrencia, no
+// evidencia. Guardarlo sería conservar para siempre lo que el browser CREYÓ que
+// valía el producto.
+export const foodOrderResolvedLineSchema = z.object({
+  item_id: z.string().uuid(),
+  // Snapshot del nombre al momento del pedido. Si mañana se renombra el
+  // producto, la evidencia sigue diciendo lo que el cliente leyó.
+  name:       z.string().trim().min(1).max(120),
+  quantity:   z.number().int().min(1).max(99),
+  notes:      z.string().trim().max(300).optional(),
+  unit_price: moneyStringSchema,
+  line_total: moneyStringSchema,
+}).strict()
+
+export const foodOrderResolvedPayloadSchema = refinarFulfillment(
+  z.object({
+    ...foodOrderCommonFields,
+    items:    z.array(foodOrderResolvedLineSchema).min(1).max(MAX_CART_LINES),
+    // La moneda sale de tenants.currency, NUNCA del browser — eso lo garantiza
+    // el resolver, que la lee de la tabla y no la recibe por parámetro.
+    //
+    // Acá se valida la FORMA, no la política: tres caracteres, que es
+    // exactamente lo que la columna puede contener. No se usa currencySchema
+    // (el enum ARS/USD/EUR/BRL) a propósito — tenants.currency no tiene CHECK y
+    // createTenantSchema la acepta como z.string().length(3), así que un tenant
+    // con otra moneda EXISTE. Con el enum, todos sus pedidos morirían en un 500
+    // opaco al validar el payload que el propio servidor acaba de armar.
+    currency: z.string().trim().length(3, 'Moneda inválida.'),
+    subtotal: moneyStringSchema,
+  }).strict(),
+)
+
+// El intent food_order valida su ENTRADA con el schema de entrada: es lo que
+// llega por el body. El resuelto se aplica aparte, después de leer el catálogo,
+// justo antes de persistir (ver /api/public/forms).
+const foodOrderPayload = foodOrderInputSchema
 
 const PAYLOAD_SCHEMAS = {
   temporary_rental:       temporaryRentalPayload,
@@ -450,6 +549,22 @@ export const createSubmissionRequestSchema = z.object({
   payload:         z.record(z.unknown()),
 })
 
+// ── Respuesta pública de éxito ─────────────────────────────────────────────
+//
+// Fase 3E-C3B1 (fix) — antes esto no tenía forma declarada: el endpoint
+// devolvía { ok, reference } y `deduplicated` solo se podía inferir del código
+// HTTP (200 vs 201). El wrapper del carrito necesita el dato, y deducirlo de un
+// status code es exactamente la clase de contrato implícito que se rompe sin que
+// nadie se entere.
+//
+// Sigue sin exponer id interno, tenant_id ni payload: solo lo que el visitante
+// tiene que ver, más si su envío fue un reintento de uno ya aceptado.
+export const createSubmissionResponseSchema = z.object({
+  ok:           z.literal(true),
+  reference:    z.string().trim().min(1),
+  deduplicated: z.boolean(),
+})
+
 // ── Tipos ──────────────────────────────────────────────────────────────────
 
 export type TenantVertical           = z.infer<typeof tenantVerticalSchema>
@@ -458,3 +573,8 @@ export type FormSource               = z.infer<typeof formSourceSchema>
 export type SubmissionStatus         = z.infer<typeof submissionStatusSchema>
 export type FormFieldType            = z.infer<typeof formFieldTypeSchema>
 export type CreateSubmissionRequest  = z.infer<typeof createSubmissionRequestSchema>
+export type CreateSubmissionResponse = z.infer<typeof createSubmissionResponseSchema>
+export type FoodOrderInputLine       = z.infer<typeof foodOrderInputLineSchema>
+export type FoodOrderInput           = z.infer<typeof foodOrderInputSchema>
+export type FoodOrderResolvedLine    = z.infer<typeof foodOrderResolvedLineSchema>
+export type FoodOrderResolvedPayload = z.infer<typeof foodOrderResolvedPayloadSchema>

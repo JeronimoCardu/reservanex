@@ -13,11 +13,14 @@
 
 import { useMemo, useState } from 'react'
 import {
+  createSubmissionResponseSchema,
   getFormDefinition,
   isFieldVisible,
+  type CreateSubmissionResponse,
   type FormField,
   type FormIntent,
 } from '@orderflow/validators'
+import { buildSubmissionWhatsAppHref } from '@/lib/site/submission-whatsapp'
 import {
   applyFieldValue,
   buildSubmissionPayload,
@@ -40,14 +43,42 @@ interface DynamicFormProps {
   // el CTA de WhatsApp, se muestra la referencia y listo. Nunca un número
   // inventado ni un link roto.
   whatsappNumber?: string | null
-}
 
-// Mensaje prearmado del CTA. Deliberadamente mínimo: solo la referencia corta,
-// que alcanza para correlacionar (§2). NADA de UUIDs, payload ni tenant_id —
-// el worker recupera todo eso server-side después de un inbound autenticado.
-function buildWhatsAppHref(phoneDigits: string, reference: string): string {
-  const text = `Hola, completé el formulario en ReservaNex.\nReferencia: ${reference}`
-  return `https://wa.me/${phoneDigits}?text=${encodeURIComponent(text)}`
+  // ── Fase 3E-C3B1 — tres ganchos genéricos, cero lógica de dominio ────────
+  //
+  // El carrito gastronómico necesita mandar `items` junto con los campos del
+  // formulario y reaccionar a los 409 del servidor. Eso NO se resuelve
+  // metiendo el carrito acá adentro ni inventando un tipo de campo
+  // array/repeater: se resuelve dejando que un wrapper adjunte payload y
+  // atienda errores estructurados. DynamicForm sigue sin saber qué es un
+  // pedido.
+
+  /**
+   * Claves extra que se mezclan al payload, además de los campos del
+   * formulario. Se aplican DESPUÉS de buildSubmissionPayload, así que un
+   * wrapper no puede pisar un campo del formulario por accidente: si lo
+   * intenta, el schema .strict() del servidor lo rechaza igual.
+   */
+  extraPayload?: Record<string, unknown>
+
+  /**
+   * Recibe el cuerpo de una respuesta de error que trae `code` (hoy: los 409
+   * de precio y de carrito). Si devuelve true, el formulario da por manejado
+   * el error y no dibuja el suyo.
+   */
+  onStructuredError?: (body: { code: string } & Record<string, unknown>) => boolean
+
+  /**
+   * Se llama una vez, con la RESPUESTA REAL del POST, cuando la submission quedó
+   * creada. Incluye `deduplicated`, que no es un error: un reintento idempotente
+   * de un pedido ya aceptado llega acá igual, con la misma referencia.
+   *
+   * El wrapper tiene que guardarse esto: es lo único que sostiene su propia
+   * pantalla de éxito. Fase 3E-C3B1 (fix) — antes recibía `string | null` y el
+   * "¡Listo!" lo dibujaba el estado interno de ESTE componente, que el wrapper
+   * podía remontar y perder.
+   */
+  onSubmitted?: (result: CreateSubmissionResponse) => void
 }
 
 // Un solo lugar decide el aspecto de un control, con y sin error.
@@ -65,6 +96,7 @@ function controlClasses(hasError: boolean): string {
 
 export function DynamicForm({
   tenantSlug, intent, publicationRef, idempotencyKey, whatsappNumber,
+  extraPayload, onStructuredError, onSubmitted,
 }: DynamicFormProps) {
   const definition = useMemo(() => getFormDefinition({ intent }), [intent])
   const [values, setValues] = useState<FormValues>(() => initialFormValues(definition))
@@ -97,8 +129,9 @@ export function DynamicForm({
     setFormError(null)
     setErrors({})
 
-    // Solo campos visibles y no vacíos (ver form-state).
-    const payload = buildSubmissionPayload(definition, values)
+    // Solo campos visibles y no vacíos (ver form-state), más lo que adjunte el
+    // wrapper. El servidor revalida todo junto contra el schema del intent.
+    const payload = { ...buildSubmissionPayload(definition, values), ...(extraPayload ?? {}) }
 
     try {
       const res = await fetch('/api/public/forms', {
@@ -117,8 +150,29 @@ export function DynamicForm({
       const data = await res.json().catch(() => null)
 
       if (res.ok && data?.ok) {
-        setReference(data.reference ?? null)
-        setStatus('success')
+        // Se valida la respuesta con el MISMO schema que el endpoint declara, así
+        // que el wrapper recibe un objeto con forma garantizada y no un shape
+        // adivinado. Si el servidor devolviera algo inesperado, se cae al error
+        // genérico de abajo en vez de propagar un éxito a medias.
+        const exito = createSubmissionResponseSchema.safeParse(data)
+
+        if (exito.success) {
+          setReference(exito.data.reference)
+          setStatus('success')
+          onSubmitted?.(exito.data)
+          return
+        }
+
+        console.error('[dynamic-form] respuesta de éxito con forma inesperada')
+        setStatus('error')
+        setFormError('No pudimos confirmar el envío. Escribinos por WhatsApp para verificarlo.')
+        return
+      }
+
+      // Error estructurado (409): el wrapper sabe qué hacer con él —actualizar
+      // precios, marcar productos— y el formulario no.
+      if (typeof data?.code === 'string' && onStructuredError?.(data)) {
+        setStatus('idle')
         return
       }
 
@@ -154,9 +208,7 @@ export function DynamicForm({
     // Fase 3B — el formulario ya no termina acá: continúa por WhatsApp.
     // El CTA solo existe si hay número Y referencia; sin alguno de los dos se
     // muestra la referencia sola, que sigue siendo un estado válido.
-    const waHref = whatsappNumber && reference
-      ? buildWhatsAppHref(whatsappNumber, reference)
-      : null
+    const waHref = buildSubmissionWhatsAppHref(whatsappNumber, reference)
 
     return (
       <div

@@ -222,20 +222,29 @@ describe('validateSubmissionPayload', () => {
   })
 
   it('requires an address for delivery and refuses one for takeaway', () => {
+    // Fase 3E-C3B1 — food_order dejó de aceptar un pedido sin productos, así
+    // que estos casos ahora llevan un carrito mínimo. Lo que se prueba sigue
+    // siendo el campo condicional.
+    const items = [{
+      item_id: '11111111-1111-4111-8111-111111111111',
+      quantity: 1,
+      expected_unit_price: '10000.00',
+    }]
+
     const missing = validateSubmissionPayload('food_order', {
-      name: 'Ana', fulfillment: 'delivery', payment_method: 'cash',
+      name: 'Ana', fulfillment: 'delivery', payment_method: 'cash', items,
     })
     expect(missing.ok).toBe(false)
     if (!missing.ok) expect(missing.errors.address).toBeDefined()
 
     const spurious = validateSubmissionPayload('food_order', {
-      name: 'Ana', fulfillment: 'takeaway', payment_method: 'cash', address: 'Calle 1',
+      name: 'Ana', fulfillment: 'takeaway', payment_method: 'cash', address: 'Calle 1', items,
     })
     expect(spurious.ok).toBe(false)
     if (!spurious.ok) expect(spurious.errors.address).toBeDefined()
 
     const good = validateSubmissionPayload('food_order', {
-      name: 'Ana', fulfillment: 'delivery', payment_method: 'cash', address: 'Calle Falsa 123',
+      name: 'Ana', fulfillment: 'delivery', payment_method: 'cash', address: 'Calle Falsa 123', items,
     })
     expect(good.ok).toBe(true)
   })

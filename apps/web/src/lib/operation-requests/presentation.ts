@@ -11,6 +11,7 @@
 
 import type { ReceptionistPermissionKey } from '@/lib/dashboard/permission-fields'
 import {
+  formatMoneyString,
   formIntentSchema,
   getFormDefinition,
   isFieldVisible,
@@ -326,6 +327,56 @@ export function statusTone(status: string): 'amber' | 'green' | 'red' | 'zinc' {
 export interface SnapshotLine {
   label: string
   value: string
+  /** El valor ocupa varios renglones y se muestra debajo del label. */
+  block?: boolean
+}
+
+// ── El detalle de un pedido (Fase 3E-C3B1) ─────────────────────────────────
+//
+// buildSnapshotLines recorre los CAMPOS de la FormDefinition, y `items` no es un
+// campo del formulario: viaja aparte, resuelto por el servidor. Sin esta rama,
+// un pedido se vería en la bandeja con el nombre, la entrega y el pago… y sin
+// nada de lo que la persona pidió.
+//
+// Igual que en el resumen de WhatsApp: NO se recalcula ni se reconsulta el
+// catálogo. Todo sale del snapshot, que es la evidencia congelada.
+interface LineaPedidoSnapshot {
+  name?:       unknown
+  quantity?:   unknown
+  notes?:      unknown
+  line_total?: unknown
+}
+
+function foodOrderSnapshotLines(payload: Record<string, unknown>): SnapshotLine[] {
+  const items = payload.items
+  if (!Array.isArray(items) || items.length === 0) return []
+
+  const currency = typeof payload.currency === 'string' ? payload.currency : ''
+  const renglones: string[] = []
+
+  for (const crudo of items as LineaPedidoSnapshot[]) {
+    const nombre = typeof crudo?.name === 'string' ? crudo.name.trim() : ''
+    if (!nombre) continue
+
+    const cantidad = typeof crudo.quantity === 'number' ? crudo.quantity : Number(crudo.quantity)
+    const total    = typeof crudo.line_total === 'string' ? crudo.line_total : ''
+
+    renglones.push(
+      total ? `${cantidad} × ${nombre} — ${formatMoneyString(total, currency)}` : `${cantidad} × ${nombre}`,
+    )
+
+    const nota = typeof crudo.notes === 'string' ? crudo.notes.trim() : ''
+    if (nota) renglones.push(`  ${nota}`)
+  }
+
+  if (renglones.length === 0) return []
+
+  const lines: SnapshotLine[] = [{ label: 'Pedido', value: renglones.join('\n'), block: true }]
+
+  const subtotal = typeof payload.subtotal === 'string' ? payload.subtotal : ''
+  if (subtotal) lines.push({ label: 'Subtotal', value: formatMoneyString(subtotal, currency) })
+
+  return lines
 }
 
 function formatIsoDate(value: string): string {
@@ -363,7 +414,12 @@ export function buildSnapshotLines(
   }
 
   const definition = getFormDefinition({ intent: parsed.data as FormIntent })
-  const lines: SnapshotLine[] = []
+  // El detalle del pedido primero: es lo que hay que mirar para despacharlo.
+  // Con `onlyFields` (la fila resumida de la bandeja) no se incluye: ahí entran
+  // dos o tres datos, no la comanda entera.
+  const lines: SnapshotLine[] = onlyFields || parsed.data !== 'food_order'
+    ? []
+    : foodOrderSnapshotLines(payload)
 
   for (const field of definition.fields) {
     if (onlyFields && !onlyFields.includes(field.name)) continue

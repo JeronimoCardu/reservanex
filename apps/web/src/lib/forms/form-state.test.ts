@@ -92,6 +92,15 @@ describe('buildSubmissionPayload', () => {
 // pasar la MISMA validación que corre el servidor. Si un día divergen, esto
 // falla acá y no en producción con un visitante mirando.
 describe('client payload agrees with server validation', () => {
+  // Fase 3E-C3B1 — un pedido ya no se completa solo con los campos del
+  // formulario: el carrito viaja aparte, como extraPayload del wrapper. Estos
+  // casos arman la MISMA composición que hace DynamicForm.
+  const CARRITO = [{
+    item_id: '11111111-1111-4111-8111-111111111111',
+    quantity: 2,
+    expected_unit_price: '10000.00',
+  }]
+
   it('produces a takeaway order the server accepts', () => {
     let values = initialFormValues(foodOrder)
     values = applyFieldValue(foodOrder, values, 'name', 'Ana')
@@ -100,8 +109,8 @@ describe('client payload agrees with server validation', () => {
     values = applyFieldValue(foodOrder, values, 'fulfillment', 'takeaway')
     values = applyFieldValue(foodOrder, values, 'payment_method', 'cash')
 
-    const result = validateSubmissionPayload('food_order', buildSubmissionPayload(foodOrder, values))
-    expect(result.ok).toBe(true)
+    const payload = { ...buildSubmissionPayload(foodOrder, values), items: CARRITO }
+    expect(validateSubmissionPayload('food_order', payload).ok).toBe(true)
   })
 
   it('produces a delivery order the server accepts', () => {
@@ -111,8 +120,20 @@ describe('client payload agrees with server validation', () => {
     values = applyFieldValue(foodOrder, values, 'address', 'Calle Falsa 123')
     values = applyFieldValue(foodOrder, values, 'payment_method', 'transfer')
 
+    const payload = { ...buildSubmissionPayload(foodOrder, values), items: CARRITO }
+    expect(validateSubmissionPayload('food_order', payload).ok).toBe(true)
+  })
+
+  it('los campos del formulario SOLOS ya no alcanzan para un pedido', () => {
+    // Es el contrato nuevo, no una regresión: sin carrito no hay pedido. Si
+    // esto empezara a pasar, alguien volvió a hacer `items` opcional.
+    let values = initialFormValues(foodOrder)
+    values = applyFieldValue(foodOrder, values, 'name', 'Ana')
+    values = applyFieldValue(foodOrder, values, 'fulfillment', 'takeaway')
+    values = applyFieldValue(foodOrder, values, 'payment_method', 'cash')
+
     const result = validateSubmissionPayload('food_order', buildSubmissionPayload(foodOrder, values))
-    expect(result.ok).toBe(true)
+    expect(result.ok).toBe(false)
   })
 
   it('produces a rental with pets the server accepts, and without pets after unchecking', () => {

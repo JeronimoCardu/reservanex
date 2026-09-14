@@ -93,9 +93,13 @@ export function getSubmissionMessages(language: MessageLanguage): SubmissionMess
 // determinístico (ver submission-summary.ts).
 export function renderSummaryMessage(
   language: MessageLanguage,
-  lines:    Array<{ label: string; value: string }>,
+  lines:    Array<{ label: string; value: string; block?: boolean }>,
 ): string {
   const m = getSubmissionMessages(language)
-  const body = lines.map((l) => `${l.label}: ${l.value}`).join('\n')
+  // Fase 3E-C3B1 — una línea marcada como `block` pone su valor DEBAJO del
+  // label. Es lo que necesita el detalle de un pedido, que son varios renglones.
+  const body = lines
+    .map((l) => (l.block ? `${l.label}:\n${l.value}` : `${l.label}: ${l.value}`))
+    .join('\n')
   return `${m.summaryIntro}\n\n${body}\n\n${m.summaryQuestion}`
 }
