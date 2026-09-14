@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { requireTenantContext } from '@/lib/auth/require-tenant-context'
+import { mapOrderIdsByOperationRequest } from '@/lib/repositories/orders.repository'
 import {
   listOperationRequests,
   type OperationRequestStatus,
@@ -33,6 +34,16 @@ export default async function RequestsPage({
 
   const requests = await listOperationRequests({ status: filter, limit: 200 })
 
+  // Fase 3E-C3C — para cada order_request ya aceptado, el pedido que produjo.
+  // Una sola consulta para toda la bandeja: con esto la fila puede ofrecer
+  // "Ver pedido" sin N+1 y sin duplicar el ciclo de vida acá. Solicitudes
+  // DECIDE; Pedidos OPERA.
+  const orderIdsByRequest = ctx.vertical === 'food_service'
+    ? await mapOrderIdsByOperationRequest(
+        requests.filter((r) => r.kind === 'order_request').map((r) => r.id),
+      )
+    : {}
+
   // Fase 3E-B1 — el permiso depende del TIPO de solicitud, no es uno solo para
   // toda la bandeja: gestionar una consulta no es la misma autoridad que
   // aprobar una reserva. La RPC lo revalida por kind igual — esto solo decide
@@ -62,6 +73,7 @@ export default async function RequestsPage({
         canManageVisits={canManageVisits}
         canManageTables={canManageTables}
         canManageOrders={canManageOrders}
+        orderIdsByRequest={orderIdsByRequest}
         activeFilter={filter}
       />
     </div>

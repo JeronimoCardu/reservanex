@@ -1919,6 +1919,205 @@ export type Database = {
           },
         ]
       }
+      order_items: {
+        Row: {
+          created_at: string
+          id: string
+          line_total: number
+          menu_item_id: string
+          name_snapshot: string
+          notes: string | null
+          order_id: string
+          quantity: number
+          sort_order: number
+          unit_price_snapshot: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          line_total: number
+          menu_item_id: string
+          name_snapshot: string
+          notes?: string | null
+          order_id: string
+          quantity: number
+          sort_order: number
+          unit_price_snapshot: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          line_total?: number
+          menu_item_id?: string
+          name_snapshot?: string
+          notes?: string | null
+          order_id?: string
+          quantity?: number
+          sort_order?: number
+          unit_price_snapshot?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_items_menu_item_id_fkey"
+            columns: ["menu_item_id"]
+            isOneToOne: false
+            referencedRelation: "menu_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_items_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      orders: {
+        Row: {
+          cancellation_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          completed_at: string | null
+          completed_by: string | null
+          confirmed_at: string
+          confirmed_by: string | null
+          contact_id: string
+          created_at: string
+          currency: string
+          delivery_address_snapshot: string | null
+          fulfillment: string
+          id: string
+          notes: string | null
+          payment_method: string
+          preparing_at: string | null
+          preparing_by: string | null
+          ready_at: string | null
+          ready_by: string | null
+          source_operation_request_id: string
+          status: string
+          subtotal: number
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
+          confirmed_at?: string
+          confirmed_by?: string | null
+          contact_id: string
+          created_at?: string
+          currency: string
+          delivery_address_snapshot?: string | null
+          fulfillment: string
+          id?: string
+          notes?: string | null
+          payment_method: string
+          preparing_at?: string | null
+          preparing_by?: string | null
+          ready_at?: string | null
+          ready_by?: string | null
+          source_operation_request_id: string
+          status?: string
+          subtotal: number
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          cancellation_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
+          confirmed_at?: string
+          confirmed_by?: string | null
+          contact_id?: string
+          created_at?: string
+          currency?: string
+          delivery_address_snapshot?: string | null
+          fulfillment?: string
+          id?: string
+          notes?: string | null
+          payment_method?: string
+          preparing_at?: string | null
+          preparing_by?: string | null
+          ready_at?: string | null
+          ready_by?: string | null
+          source_operation_request_id?: string
+          status?: string
+          subtotal?: number
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "orders_cancelled_by_fkey"
+            columns: ["cancelled_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_completed_by_fkey"
+            columns: ["completed_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_confirmed_by_fkey"
+            columns: ["confirmed_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_preparing_by_fkey"
+            columns: ["preparing_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_ready_by_fkey"
+            columns: ["ready_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_source_operation_request_id_fkey"
+            columns: ["source_operation_request_id"]
+            isOneToOne: true
+            referencedRelation: "operation_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants_public"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       platform_users: {
         Row: {
           active: boolean
@@ -3991,6 +4190,10 @@ export type Database = {
         Returns: Json
       }
       tenant_actor_context: { Args: { p_permission: string }; Returns: Json }
+      transition_order_status: {
+        Args: { p_order_id: string; p_reason?: string; p_status: string }
+        Returns: Json
+      }
       verify_hook_configured: { Args: never; Returns: boolean }
       visit_manager_context: { Args: never; Returns: Json }
       void_monthly_rental_payment: {

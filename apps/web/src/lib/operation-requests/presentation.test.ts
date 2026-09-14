@@ -187,11 +187,11 @@ describe('acciones por kind (3E-B1)', () => {
   })
 
   it('un kind sin override cae al vocabulario de reservas', () => {
-    // visit_request salió de este grupo en 3E-B2 y table_request en 3E-C2.
-    // order_request es el único que queda, y a propósito: los pedidos están
-    // bloqueados hasta que exista catálogo.
-    expect(decisionActions('order_request').confirm).toBe('Aprobar')
+    // visit_request salió de este grupo en 3E-B2, table_request en 3E-C2 y
+    // order_request en 3E-C3C, cuando los pedidos dejaron de estar bloqueados.
+    // Ya NINGÚN kind real usa el default: queda como red para uno futuro.
     expect(decisionActions('cualquiera').confirm).toBe('Aprobar')
+    expect(decisionActions('cualquiera').reject).toBe('Rechazar')
   })
 
   it('isInquiry distingue solo las consultas', () => {
@@ -400,9 +400,16 @@ describe('estados y acciones de mesa (3E-C2)', () => {
     expect(statusLabel('confirmed', 'visit_request')).toBe('Agendada')
   })
 
-  it('order_request queda sin override: los pedidos están bloqueados hasta el catálogo', () => {
-    expect(statusLabel('confirmed', 'order_request')).toBe('Aprobada')
-    expect(decisionActions('order_request').confirm).toBe('Aprobar')
+  it('order_request ya tiene su propio vocabulario (3E-C3C)', () => {
+    // Antes caía al default porque los pedidos estaban bloqueados. Ahora
+    // aceptar MATERIALIZA una comanda, y los botones tienen que decirlo.
+    const a = decisionActions('order_request')
+    expect(a.confirm).toBe('Aceptar pedido')
+    expect(a.reject).toBe('Rechazar pedido')
+    expect(a.confirmBody).toContain('comanda')
+    // §23 — rechazar NO es cancelar, y el copy lo distingue explícitamente.
+    expect(a.rejectBody).toContain('NO se crea ningún pedido')
+    expect(a.rejectBody).toContain('cancelar')
   })
 
   it('los verbos de una mesa son confirmar y rechazar', () => {

@@ -123,6 +123,19 @@ const DECISION_ACTIONS_BY_KIND: Partial<Record<OperationKind, DecisionActions>> 
     rejectBody:   'La solicitud queda descartada y no se agenda ninguna visita.',
     notesLabel:   'Nota interna (opcional)',
   },
+  // Fase 3E-C3C — aceptar un pedido MATERIALIZA la comanda; rechazarlo no crea
+  // nada. La diferencia entre rechazar y cancelar es de producto y tiene que
+  // leerse en los botones: rechazado = la empresa nunca lo aceptó; cancelado =
+  // lo aceptó y después lo dio de baja, y eso vive en el pedido, no acá.
+  order_request: {
+    confirm:      'Aceptar pedido',
+    reject:       'Rechazar pedido',
+    confirmTitle: 'Aceptar el pedido',
+    rejectTitle:  'Rechazar el pedido',
+    confirmBody:  'Se crea la comanda en Pedidos con los productos y precios que el cliente confirmó, y desde ahí se opera. Los precios NO se recalculan: quedan los del momento del pedido.',
+    rejectBody:   'La solicitud queda rechazada y NO se crea ningún pedido. Rechazar no es lo mismo que cancelar un pedido ya aceptado.',
+    notesLabel:   'Nota interna (opcional)',
+  },
   inquiry: {
     confirm:      'Marcar como gestionada',
     reject:       'Descartar',

@@ -40,6 +40,7 @@ import { randomUUID } from 'node:crypto'
 import { deflateSync } from 'node:zlib'
 import { createAdminClient } from '@orderflow/supabase/admin'
 import { assertSafeSupabaseTarget } from './assert-safe-target'
+import { generateSubmissionReference } from '../src/lib/forms/submission-reference'
 
 const HR = '─'.repeat(78)
 
@@ -199,6 +200,21 @@ async function main() {
         const { error } = await admin.storage.from(BUCKET).remove(paths)
         if (error) console.error(`  ✗ ${BUCKET}: ${error.message}`)
         else console.log(`  ✓ ${BUCKET}: ${paths.length} archivo(s)`)
+      }
+
+      // Fase 3E-C3C — los pedidos van PRIMERO: order_items cuelga de orders con
+      // CASCADE, pero orders.source_operation_request_id es ON DELETE RESTRICT,
+      // así que borrar las solicitudes antes que los pedidos falla.
+      const { data: pedidos } = await admin.from('orders').select('id').eq('tenant_id', existente.id)
+      const idsPedidos = (pedidos ?? []).map((o) => o.id)
+      if (idsPedidos.length > 0) {
+        const { error } = await admin.from('order_items').delete().in('order_id', idsPedidos)
+        if (error) console.error(`  ✗ order_items: ${error.message}`)
+      }
+      {
+        const { count, error } = await admin.from('orders').delete({ count: 'exact' }).eq('tenant_id', existente.id)
+        if (error) console.error(`  ✗ orders: ${error.message}`)
+        else if ((count ?? 0) > 0) console.log(`  ✓ orders: ${count}`)
       }
 
       // Orden importante: items antes que categorías (ON DELETE RESTRICT).
@@ -392,6 +408,110 @@ async function main() {
     console.log(`  ✓ carta cargada: ${nCats} categorías · ${nItems} productos · ${nFotos} con foto`)
   }
 
+  // ── Solicitudes de pedido PENDIENTES (Fase 3E-C3C §30) ───────────────────
+  //
+  // NO se crean orders a mano. Se crean form_submissions con el payload
+  // resuelto que escribe C3B1 y se confirman con la MISMA RPC que usa el
+  // worker, así que lo que queda es un order_request pending real, listo para
+  // aceptar o rechazar desde Solicitudes.
+  //
+  // Los cuatro escenarios cubren lo que hay que poder mirar a ojo: retiro,
+  // delivery con dirección, dos líneas del mismo producto con aclaraciones
+  // distintas, y un producto de precio 0.
+  {
+    const { count: yaHay } = await admin.from('operation_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId).eq('kind', 'order_request').eq('status', 'pending')
+
+    if ((yaHay ?? 0) > 0) {
+      console.log(`  ya hay ${yaHay} solicitud(es) de pedido pendientes; no se crean más`)
+    } else {
+      const { data: items } = await admin.from('menu_items')
+        .select('id, name, base_price').eq('tenant_id', tenantId)
+        .eq('published', true).eq('available', true).is('deleted_at', null)
+
+      const porNombre = new Map((items ?? []).map((i) => [i.name, i]))
+      const linea = (nombre: string, qty: number, notes?: string) => {
+        const it = porNombre.get(nombre)
+        if (!it) return null
+        const unit = Number(it.base_price)
+        return {
+          item_id: it.id, name: it.name, quantity: qty,
+          unit_price: unit.toFixed(2),
+          line_total: (Math.round(unit * 100) * qty / 100).toFixed(2),
+          ...(notes ? { notes } : {}),
+        }
+      }
+
+      const armar = (ls: Array<Record<string, unknown> | null>, extra: Record<string, unknown>) => {
+        const lineas = ls.filter(Boolean) as Array<Record<string, unknown>>
+        if (lineas.length === 0) return null
+        const cents = lineas.reduce((n, l) => n + Math.round(Number(l.line_total) * 100), 0)
+        return {
+          name: 'Cliente de prueba', payment_method: 'cash',
+          items: lineas, currency: 'ARS', subtotal: (cents / 100).toFixed(2),
+          ...extra,
+        }
+      }
+
+      const escenarios: Array<[string, Record<string, unknown> | null]> = [
+        ['retiro simple', armar(
+          [linea('Muzzarella', 1), linea('Agua 500ml', 2)],
+          { fulfillment: 'takeaway' })],
+        ['delivery con dirección', armar(
+          [linea('Napolitana', 1), linea('Gaseosa 1.5L', 1)],
+          { fulfillment: 'delivery', address: 'Av. Siempreviva 742, 3.º B', notes: 'Tocar timbre, no funciona el portero' })],
+        ['mismo producto en dos líneas', armar(
+          [linea('Muzzarella', 2, 'sin cebolla'), linea('Muzzarella', 1, 'sin aceitunas'), linea('Agua 500ml', 1)],
+          { fulfillment: 'takeaway' })],
+        ['con un producto gratis', armar(
+          [linea('Muzzarella', 1), linea('Pan de cortesía', 2)],
+          { fulfillment: 'delivery', address: 'Calle Falsa 123' })],
+      ]
+
+      // Un contacto propio del fixture: es lo que el pedido va a mostrar como
+      // cliente. El teléfono es de prueba y no recibe nada.
+      let contactId: string | null = null
+      const { data: contactoExistente } = await admin.from('contacts')
+        .select('id').eq('tenant_id', tenantId).limit(1).maybeSingle()
+      if (contactoExistente) {
+        contactId = contactoExistente.id
+      } else {
+        const { data: c, error: eC } = await admin.from('contacts').insert({
+          tenant_id: tenantId, phone: '5491100000001', name: 'Cliente de prueba',
+        } as never).select('id').single()
+        if (eC || !c) console.error(`  ✗ contacto: ${eC?.message}`)
+        else contactId = c.id
+      }
+
+      let creadas = 0
+      if (contactId) {
+        for (const [etiqueta, payload] of escenarios) {
+          if (!payload) { console.error(`  ✗ ${etiqueta}: faltan productos en la carta`); continue }
+
+          const { data: sub, error: eS } = await admin.from('form_submissions').insert({
+            tenant_id: tenantId, reference: generateSubmissionReference(),
+            intent: 'food_order', status: 'submitted', source: 'public_site',
+            payload: payload as never, idempotency_key: randomUUID(),
+            contact_id: contactId,
+            expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+          } as never).select('id, reference').single()
+          if (eS || !sub) { console.error(`  ✗ ${etiqueta}: ${eS?.message}`); continue }
+
+          const { error: eR } = await admin.rpc('confirm_submission_and_create_operation', {
+            p_submission_id: sub.id, p_tenant_id: tenantId, p_contact_id: contactId,
+            p_conversation_id: undefined,
+          })
+          if (eR) { console.error(`  ✗ ${etiqueta}: ${eR.message}`); continue }
+
+          console.log(`  ✓ solicitud pendiente — ${etiqueta} (${sub.reference})`)
+          creadas++
+        }
+      }
+      if (creadas > 0) console.log(`  ✓ ${creadas} solicitud(es) de pedido listas para aceptar o rechazar`)
+    }
+  }
+
   const { count: cats }  = await admin.from('menu_categories')
     .select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId)
   const { count: items } = await admin.from('menu_items')
@@ -429,6 +549,28 @@ async function main() {
   console.log('                             Calabresa NO aparece: es borrador')
   console.log('                             Pan de cortesía dice "Gratis"')
   console.log('    /site/demo-autoresponder el sitio inmobiliario, sin cambios')
+  console.log(HR)
+  console.log('  QUÉ PROBAR — la operación (3E-C3C)')
+  console.log('    /dashboard/requests   hay 4 solicitudes de tipo Pedido en estado')
+  console.log('                          Pendiente, con snapshots distintos.')
+  console.log('    1. Aceptar            "Aceptar pedido" en una de ellas → se crea la')
+  console.log('                          comanda y aparece el CTA "Ver pedido".')
+  console.log('    2. Rechazar           "Rechazar pedido" en otra → NO se crea nada.')
+  console.log('    3. /dashboard/orders  la lista con filtros. Por defecto, Activos.')
+  console.log('    4. Detalle            tocá un pedido: líneas, notas por línea,')
+  console.log('                          subtotal, dirección, pago y los hitos.')
+  console.log('                          Las dos líneas de Muzzarella van SEPARADAS.')
+  console.log('    5. Ciclo              Comenzar preparación → Marcar como listo →')
+  console.log('                          Marcar como completado. Las marcas anteriores')
+  console.log('                          NO se borran.')
+  console.log('    6. Cancelar           desde cualquiera de los tres estados vivos,')
+  console.log('                          con motivo o sin él.')
+  console.log('    7. Terminal           un pedido completado o cancelado ya no ofrece')
+  console.log('                          ninguna acción.')
+  console.log('    8. Snapshot           cambiá el precio de Muzzarella en /dashboard/menu:')
+  console.log('                          el pedido ya aceptado NO cambia.')
+  console.log('    9. Permisos           con recep.gastro (can_manage_menu pero NO')
+  console.log('                          can_manage_orders): ve Pedidos, no puede operarlos.')
   console.log(HR)
   console.log('  QUÉ PROBAR — el pedido (3E-C3B1)')
   console.log(`    /site/${SLUG}`)

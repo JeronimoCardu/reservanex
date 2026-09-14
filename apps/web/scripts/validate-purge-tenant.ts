@@ -32,7 +32,9 @@ import { config } from 'dotenv'
 config({ path: path.resolve(__dirname, '..', '..', '..', '.env.local') })
 
 import { randomBytes, randomUUID } from 'node:crypto'
+import { createClient as createSupabaseJsClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@orderflow/supabase/admin'
+import { generateSubmissionReference } from '../src/lib/forms/submission-reference'
 import { assertSafeSupabaseTarget } from './assert-safe-target'
 import { hashDeviceToken } from '../src/lib/autoresponder-webhook'
 import {
@@ -424,6 +426,155 @@ async function main(): Promise<void> {
       ok('8. When the DB purge fails, Storage deletion is never attempted (storage.attempted stays false)')
     } else {
       nok('8. DB-fail-blocks-Storage guarantee', JSON.stringify(bogusResult))
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 10. Fase 3E-C3C — un tenant CON UN PEDIDO REAL se puede purgar
+    // ════════════════════════════════════════════════════════════════════════
+    //
+    // C3C agregó dos FK RESTRICT:
+    //
+    //   order_items.menu_item_id           → menu_items          RESTRICT
+    //   orders.source_operation_request_id → operation_requests  RESTRICT
+    //
+    // y admin_purge_tenant() empezaba borrando operation_requests. Medido: con
+    // un pedido aceptado, el purge PRODUCTIVO fallaba con 23503 y no borraba
+    // NADA — un tenant gastronómico con un pedido no se podía eliminar.
+    //
+    // Este caso existe para que una FK futura no vuelva a romper el borrado de
+    // tenants en silencio. Construye el pedido por el flujo REAL (submission →
+    // operation_request → aceptar con la RPC) y purga con el MISMO mecanismo que
+    // usa la plataforma, no con el cleanup de un fixture.
+    {
+      const anonUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
+
+      const slug = `test-purge-orders-${Date.now()}`
+      const { data: t, error: eT } = await admin.from('tenants').insert({
+        name: `[TEST] purge-orders ${slug}`, slug, status: 'active',
+        vertical: 'food_service', currency: 'ARS',
+      } as never).select('id').single()
+      if (eT || !t) throw new Error(`10. tenant: ${eT?.message}`)
+      const oid = t.id
+
+      try {
+        const password = randomBytes(18).toString('hex')
+        const email = `owner-${slug}@example.test`
+        const { data: au, error: eU } = await admin.auth.admin.createUser({ email, password, email_confirm: true })
+        if (eU || !au.user) throw new Error(`10. auth: ${eU?.message}`)
+        authUserIds.push(au.user.id)
+        await admin.from('tenant_users').insert({
+          id: au.user.id, tenant_id: oid, name: 'Owner purge', email, role: 'owner', active: true,
+        } as never)
+
+        const { data: contact } = await admin.from('contacts')
+          .insert({ tenant_id: oid, phone: nextPhone(3_970_000_000), name: 'Cliente purge' } as never)
+          .select('id').single()
+        const { data: cat } = await admin.from('menu_categories')
+          .insert({ tenant_id: oid, name: 'Pizzas' } as never).select('id').single()
+        const { data: item } = await admin.from('menu_items').insert({
+          tenant_id: oid, category_id: cat!.id, name: 'Muzzarella',
+          base_price: 10000, published: true, available: true,
+        } as never).select('id').single()
+
+        // Dos líneas del MISMO producto: el caso que más FK toca a la vez.
+        const payload = {
+          name: 'Ana', fulfillment: 'takeaway', payment_method: 'cash',
+          items: [
+            { item_id: item!.id, name: 'Muzzarella', quantity: 2, notes: 'sin cebolla',
+              unit_price: '10000.00', line_total: '20000.00' },
+            { item_id: item!.id, name: 'Muzzarella', quantity: 1, notes: 'sin aceitunas',
+              unit_price: '10000.00', line_total: '10000.00' },
+          ],
+          currency: 'ARS', subtotal: '30000.00',
+        }
+
+        const { data: sub } = await admin.from('form_submissions').insert({
+          tenant_id: oid, reference: generateSubmissionReference(),
+          intent: 'food_order', status: 'submitted', source: 'public_site',
+          payload: payload as never, idempotency_key: randomUUID(), contact_id: contact!.id,
+          expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+        } as never).select('id').single()
+
+        const { data: conf } = await admin.rpc('confirm_submission_and_create_operation', {
+          p_submission_id: sub!.id, p_tenant_id: oid, p_contact_id: contact!.id,
+          p_conversation_id: undefined,
+        })
+        const opId = (conf as { operation_id?: string } | null)?.operation_id
+        if (!opId) throw new Error('10. no se creó el order_request')
+
+        // Aceptar con una sesión REAL: decide_operation_request resuelve el
+        // actor con auth.uid(), así que no se puede llamar con service_role.
+        const sesion = createSupabaseJsClient(anonUrl, anonKey, {
+          auth: { autoRefreshToken: false, persistSession: false },
+        })
+        const { error: eLogin } = await sesion.auth.signInWithPassword({ email, password })
+        if (eLogin) throw new Error(`10. login: ${eLogin.message}`)
+
+        const { data: dec } = await sesion.rpc('decide_operation_request', {
+          p_operation_id: opId, p_action: 'confirmed',
+        })
+        const orderId = (dec as { order_id?: string } | null)?.order_id
+        if (!orderId) throw new Error(`10. no se materializó el pedido: ${JSON.stringify(dec)}`)
+
+        const { count: itemsAntes } = await admin.from('order_items')
+          .select('id', { count: 'exact', head: true }).eq('order_id', orderId)
+
+        if ((itemsAntes ?? 0) === 2 && await countRowsForTenant('orders', 'tenant_id', oid) === 1) {
+          ok('10. Pre-purge: el tenant tiene 1 pedido real con 2 líneas del mismo producto')
+        } else {
+          nok('10. Pre-purge fixture del pedido', `items=${itemsAntes}`)
+        }
+
+        // ── EL PURGE PRODUCTIVO ─────────────────────────────────────────────
+        const res = await purgeTenantWithStorage(oid)
+
+        if (!res.dbError) {
+          ok('10. purgeTenantWithStorage() borra un tenant CON pedidos, sin 23503')
+        } else {
+          nok('10. el purge productivo falló con un pedido presente', res.dbError)
+        }
+
+        const r = (res.dbResult ?? {}) as Record<string, number>
+        if (r.order_items === 2 && r.orders === 1 && r.menu_items === 1 && r.menu_categories === 1) {
+          ok('10. y el resultado CUENTA lo borrado: order_items=2, orders=1, menu_items=1, menu_categories=1')
+        } else {
+          nok('10. el resultado del purge no cuenta las tablas nuevas', JSON.stringify(r))
+        }
+
+        // Cero residuos, cero huérfanos.
+        const restantes: string[] = []
+        for (const tabla of ['orders', 'operation_requests', 'form_submissions',
+                             'menu_items', 'menu_categories', 'contacts', 'tenant_users'] as const) {
+          const n = await countRowsForTenant(tabla, 'tenant_id', oid)
+          if (n > 0) restantes.push(`${tabla}=${n}`)
+        }
+        const { count: itemsDespues } = await admin.from('order_items')
+          .select('id', { count: 'exact', head: true }).eq('order_id', orderId)
+        if (itemsDespues && itemsDespues > 0) restantes.push(`order_items=${itemsDespues}`)
+
+        const { data: tenantRow } = await admin.from('tenants').select('id').eq('id', oid).maybeSingle()
+        if (tenantRow) restantes.push('tenants=1')
+
+        if (restantes.length === 0) {
+          ok('10. 0 residuos y 0 huérfanos: ni pedido, ni líneas, ni catálogo, ni solicitud, ni tenant')
+        } else {
+          nok('10. quedaron residuos tras el purge', restantes.join(' '))
+        }
+      } catch (err) {
+        nok('10. purge de un tenant con pedidos', err instanceof Error ? err.message : String(err))
+        // Si algo falló a mitad, el tenant puede haber quedado vivo: se limpia
+        // en el orden correcto para no dejar basura.
+        const { data: ords } = await admin.from('orders').select('id').eq('tenant_id', oid)
+        const ids = (ords ?? []).map((o) => o.id)
+        if (ids.length > 0) await admin.from('order_items').delete().in('order_id', ids)
+        for (const tb of ['orders', 'menu_items', 'menu_categories',
+                          'operation_requests', 'form_submissions'] as const) {
+          await admin.from(tb).delete().eq('tenant_id', oid)
+        }
+        try { await admin.rpc('admin_purge_tenant', { p_tenant_id: oid }) } catch { /* noop */ }
+        await admin.from('tenants').delete().eq('id', oid)
+      }
     }
 
     // ── 9. A second cleanup on the same (already-deleted) tenant is safe ─────

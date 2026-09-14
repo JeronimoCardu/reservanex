@@ -47,15 +47,16 @@ export interface PermissionField {
   /**
    * Rubros del permiso, SOLO cuando no se pueden derivar de `module`.
    *
-   * No es una segunda taxonomía: es la excepción para un permiso que gobierna un
-   * KIND vertical-specific dentro de una ruta TRANSVERSAL. El único caso hoy es
-   * can_manage_orders: los pedidos se deciden en /dashboard/requests, que sirve a
-   * los dos rubros porque es la bandeja de todas las solicitudes.
+   * HOY NO LO USA NINGÚN PERMISO, y así debería quedarse. Existió para
+   * can_manage_orders mientras /dashboard/orders no existía y su ruta natural
+   * era la bandeja transversal de solicitudes; en 3E-C3C el módulo se creó y el
+   * override se borró.
    *
-   * La alternativa —inventar '/dashboard/orders' en MODULE_VERTICALS solo para
-   * derivar el rubro— sería peor: una ruta que no existe, sin layout ni guard,
-   * declarada como si existiera. Cuando el módulo exista de verdad (C3C), este
-   * campo se borra y el permiso vuelve a derivar de su `module`.
+   * Se conserva el mecanismo —no la excepción— porque el caso que lo motivó
+   * puede repetirse: un permiso que gobierna un kind de un solo rubro dentro de
+   * una ruta transversal. Si vuelve a hacer falta, que sea una decisión
+   * explícita y no una taxonomía paralela; hay un test que exige que la lista de
+   * overrides esté vacía.
    */
   verticals?:  readonly TenantVertical[]
 }
@@ -123,15 +124,16 @@ export const PERMISSION_FIELDS: readonly PermissionField[] = [
   // Fase 3E-C3B0 — despachar pedidos es OPERACIÓN; administrar la carta es una
   // decisión COMERCIAL. Por eso no cuelga de can_manage_menu.
   //
-  // Lleva `verticals` explícito: su módulo es /dashboard/requests, que es
-  // transversal, pero el permiso solo gobierna order_request — un kind que solo
-  // existe en gastronomía.
+  // Fase 3E-C3C — ya no lleva `verticals`. Cuando se creó, el módulo que
+  // gobierna no existía y su ruta natural era /dashboard/requests, que es
+  // transversal: el override era la única forma de decir "esto es
+  // gastronómico". Ahora /dashboard/orders existe y está en MODULE_VERTICALS,
+  // así que el rubro se DERIVA como en todos los demás permisos.
   {
     key:         'can_manage_orders',
     label:       'Gestionar pedidos',
     description: 'Puede aceptar, rechazar y gestionar pedidos',
-    module:      '/dashboard/requests',
-    verticals:   ['food_service'],
+    module:      '/dashboard/orders',
   },
 ]
 

@@ -12,6 +12,7 @@ import {
   CalendarClockIcon,
   UtensilsCrossedIcon,
   ChefHatIcon,
+  ReceiptTextIcon,
 } from 'lucide-react'
 import type { TenantRole } from '@orderflow/types'
 import type { TenantVertical } from '@orderflow/validators'
@@ -47,6 +48,7 @@ export const ALL_NAV_ITEMS: readonly DashboardNavItem[] = [
   { label: 'Visitas',              href: '/dashboard/visits',             icon: CalendarClockIcon,   ownerOnly: false, setupBlocked: true  },
   { label: 'Reservas de mesa',     href: '/dashboard/table-reservations', icon: UtensilsCrossedIcon, ownerOnly: false, setupBlocked: true  },
   { label: 'Menú',                 href: '/dashboard/menu',               icon: ChefHatIcon,         ownerOnly: false, setupBlocked: true  },
+  { label: 'Pedidos',              href: '/dashboard/orders',             icon: ReceiptTextIcon,     ownerOnly: false, setupBlocked: true  },
   { label: 'Alquileres mensuales', href: '/dashboard/monthly-rentals',    icon: KeyRoundIcon,        ownerOnly: false, setupBlocked: true  },
   { label: 'Tareas',               href: '/dashboard/tasks',              icon: CheckSquareIcon,     ownerOnly: false, setupBlocked: true  },
   { label: 'Usuarios',             href: '/dashboard/users',              icon: UsersIcon,           ownerOnly: true,  setupBlocked: false },

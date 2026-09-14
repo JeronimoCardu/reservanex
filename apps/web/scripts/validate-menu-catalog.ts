@@ -1190,12 +1190,35 @@ async function main() {
     // create_operation), el mismo que corre cuando el cliente confirma por
     // WhatsApp. Nada de insertar operation_requests a mano.
     async function mkOrderRequest(tenantId: string, contactId: string): Promise<string> {
+      // Fase 3E-C3C — el payload tiene que ser el RESUELTO, el que escribe
+      // C3B1: con items, precios canónicos, moneda y subtotal. Aceptar un
+      // pedido ahora materializa una comanda y la RPC valida el snapshot antes
+      // de escribir, así que un payload incompleto —el que tenía este fixture
+      // desde C3B0— devuelve invalid_snapshot. Es correcto: un food_order real
+      // nunca tuvo esa forma.
+      const { data: itemParaPedido } = await admin.from('menu_items')
+        .select('id, name, base_price').eq('tenant_id', tenantId)
+        .is('deleted_at', null).order('created_at').limit(1).maybeSingle()
+      if (!itemParaPedido) throw new Error('mkOrderRequest: el tenant no tiene productos')
+
+      const unit  = Number(itemParaPedido.base_price)
+      const total = (Math.round(unit * 100) * 2 / 100).toFixed(2)
+
       const { data: sub, error: se } = await admin.from('form_submissions').insert({
         tenant_id: tenantId, reference: generateSubmissionReference(),
         intent: 'food_order', status: 'submitted', source: 'public_site',
         payload: {
           name: 'Diego Sosa', fulfillment: 'takeaway',
           payment_method: 'cash', notes: 'Sin sal, por favor.',
+          items: [{
+            item_id:    itemParaPedido.id,
+            name:       itemParaPedido.name,
+            quantity:   2,
+            unit_price: unit.toFixed(2),
+            line_total: total,
+          }],
+          currency: 'ARS',
+          subtotal: total,
         } as never,
         idempotency_key: randomUUID(), contact_id: contactId,
         expires_at: new Date(Date.now() + 86_400_000).toISOString(),
@@ -1324,7 +1347,7 @@ async function main() {
       const o = op as { status: string; decided_by: string | null } | null
       if (o?.status === 'confirmed' && o.decided_by === A.recepNueva.id
           && (mesas ?? 0) === 0 && (visitas ?? 0) === 0 && (reservas ?? 0) === 0) {
-        ok('J/K. order_request pasa pending → confirmed con decided_by correcto y NO materializa nada: 0 reservas de mesa, 0 visitas, 0 reservas (orders todavía no existe)')
+        ok('J/K. order_request pasa pending → confirmed con decided_by correcto y NO materializa reservas de mesa, visitas ni reservas (3E-C3C: sí crea un order, que es su dominio)')
       } else nok('AP. la confirmación de un pedido materializó algo', JSON.stringify({ o, mesas, visitas, reservas }))
     }
 
@@ -1402,7 +1425,19 @@ async function main() {
       // Y se MIRA el error: supabase-js no lanza, DEVUELVE { error }. Un
       // try/catch alrededor de estos deletes no atrapa nada y deja basura sin
       // que nadie se entere.
-      for (const tb of ['menu_items', 'menu_categories', 'operation_requests', 'form_submissions'] as const) {
+      // Fase 3E-C3C — los PEDIDOS van primero, y el orden ahora importa más:
+      //   order_items.menu_item_id            → ON DELETE RESTRICT
+      //   orders.source_operation_request_id  → ON DELETE RESTRICT
+      // Borrar menu_items antes que order_items, u operation_requests antes que
+      // orders, falla con 23503 y deja el tenant entero sin limpiar.
+      const { data: pedidos } = await admin.from('orders').select('id').eq('tenant_id', id)
+      const idsPedidos = (pedidos ?? []).map((o) => o.id)
+      if (idsPedidos.length > 0) {
+        const { error } = await admin.from('order_items').delete().in('order_id', idsPedidos)
+        if (error) problemas.push(`order_items/${id}: ${error.code} ${error.message}`)
+      }
+
+      for (const tb of ['orders', 'menu_items', 'menu_categories', 'operation_requests', 'form_submissions'] as const) {
         const { error } = await admin.from(tb).delete().eq('tenant_id', id)
         if (error) problemas.push(`${tb}/${id}: ${error.code} ${error.message}`)
       }

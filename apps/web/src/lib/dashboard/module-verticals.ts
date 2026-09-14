@@ -51,6 +51,10 @@ export const MODULE_VERTICALS = {
   // ── Solo gastronómico ─────────────────────────────────────────────────────
   '/dashboard/table-reservations': ['food_service'],
   '/dashboard/menu':               ['food_service'],
+  // Fase 3E-C3C — el módulo operacional de pedidos. Hasta acá no existía, y por
+  // eso can_manage_orders necesitaba declarar su rubro a mano; ahora lo deriva
+  // de este mapa como todos los demás.
+  '/dashboard/orders':             ['food_service'],
 } as const satisfies Record<string, readonly TenantVertical[]>
 
 export type VerticalScopedRoute = keyof typeof MODULE_VERTICALS

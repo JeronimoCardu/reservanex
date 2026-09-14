@@ -31,6 +31,7 @@
     "fixture:table-reservations-demo": "tsx scripts/prepare-table-reservations-demo-fixture.ts",
     "validate:menu-catalog": "tsx scripts/validate-menu-catalog.ts",
     "validate:food-orders": "tsx scripts/validate-food-orders.ts",
+    "validate:orders": "tsx scripts/validate-orders.ts",
     "fixture:menu-demo": "tsx scripts/prepare-menu-demo-fixture.ts"
   },
   "dependencies": {

@@ -24,11 +24,19 @@ import {
   requestTypeLabel,
   requiresTableBooking,
   requiredPermissionForKind,
+  isOrder,
   rowHighlights,
   statusLabel,
   statusTone,
 } from '@/lib/operation-requests/presentation'
 import { PERMISSION_FIELDS, type ReceptionistPermissionKey } from '@/lib/dashboard/permission-fields'
+import { StatusFilterTabs } from '@/components/tenant/shared/status-filter-tabs'
+import {
+  REQUEST_FILTERS,
+  emptyRequestsCopy,
+  requestFilterHref,
+  type RequestFilter,
+} from '@/lib/operation-requests/filters'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -41,13 +49,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-
-const FILTERS = [
-  { value: 'pending',   label: 'Pendientes' },
-  { value: 'confirmed', label: 'Aprobadas'  },
-  { value: 'rejected',  label: 'Rechazadas' },
-  { value: 'all',       label: 'Todas'      },
-] as const
 
 const TONE_CLASSES: Record<string, string> = {
   amber: 'bg-amber-100 text-amber-800 border-amber-200',
@@ -92,6 +93,7 @@ export function RequestsClient({
   canManageVisits,
   canManageTables,
   canManageOrders,
+  orderIdsByRequest,
   activeFilter,
 }: {
   requests:              OperationRequestListItem[]
@@ -100,6 +102,8 @@ export function RequestsClient({
   canManageVisits:       boolean
   canManageTables:       boolean
   canManageOrders:       boolean
+  /** Fase 3E-C3C — solicitud → pedido materializado, para el CTA "Ver pedido". */
+  orderIdsByRequest:     Record<string, string>
   activeFilter:          OperationRequestStatus | 'all'
 }) {
   const router = useRouter()
@@ -189,29 +193,23 @@ export function RequestsClient({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* ── Filtros (§15) ── */}
-      <div className="flex gap-2 border-b px-6 py-3">
-        {FILTERS.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => router.push(`/dashboard/requests?status=${f.value}`)}
-            className={`rounded-full px-3 py-1 text-sm transition ${
-              activeFilter === f.value
-                ? 'bg-zinc-900 text-white'
-                : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200'
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
+      <StatusFilterTabs
+        options={REQUEST_FILTERS}
+        active={activeFilter as RequestFilter}
+        hrefFor={requestFilterHref}
+        ariaLabel="Filtrar solicitudes por estado"
+      />
 
       {/* ── Listado ── */}
-      <div className="min-h-0 flex-1 overflow-auto p-6">
+      <div className="min-h-0 flex-1 overflow-auto p-4 sm:p-6">
         {requests.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <InboxIcon className="h-10 w-10 text-zinc-300" />
-            <p className="mt-3 text-sm text-muted-foreground">
-              No hay solicitudes {activeFilter !== 'all' ? statusLabel(activeFilter).toLowerCase() : ''}.
+            <p className="mt-3 text-sm font-medium">
+              {emptyRequestsCopy(activeFilter as RequestFilter).title}
+            </p>
+            <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+              {emptyRequestsCopy(activeFilter as RequestFilter).hint}
             </p>
           </div>
         ) : (
@@ -403,6 +401,18 @@ export function RequestsClient({
                     </Button>
                   </DialogFooter>
                 </>
+              )}
+
+              {/* Fase 3E-C3C — un pedido aceptado se OPERA en su módulo. Acá no
+                  se duplica el ciclo de vida: solo se ofrece el camino. */}
+              {isOrder(selected.kind) && orderIdsByRequest[selected.id] && (
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => router.push('/dashboard/orders')}
+                >
+                  Ver pedido
+                </Button>
               )}
 
               {selected.status === 'pending' && !puedeDecidir(selected) && (

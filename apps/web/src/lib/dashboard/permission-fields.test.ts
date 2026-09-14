@@ -48,8 +48,7 @@ const SOLO_INMOB: ReceptionistPermissionKey[] = [
 const SOLO_GASTRO: ReceptionistPermissionKey[] = [
   'can_manage_table_reservations',
   'can_manage_menu',
-  // Fase 3E-C3B0 — gastronómico por su override, no por su ruta: vive en
-  // /dashboard/requests, que es transversal.
+  // Fase 3E-C3C — gastronómico por su ruta /dashboard/orders, ya sin override.
   'can_manage_orders',
 ]
 
@@ -190,12 +189,11 @@ describe('G/H/I. can_manage_orders (Fase 3E-C3B0)', () => {
     expect(visibles(REAL, apagado)).not.toContain('can_manage_orders')
   })
 
-  it('es gastronómico por su override, no por su ruta', () => {
-    // /dashboard/requests es transversal: sin `verticals` este permiso se
-    // mostraría en los dos rubros.
-    expect(campo().module).toBe('/dashboard/requests')
-    expect(verticalsForRoute('/dashboard/requests')).toBeNull()
-    expect(campo().verticals).toEqual(['food_service'])
+  it('es gastronómico por su RUTA, como todos los demás (3E-C3C)', () => {
+    // El override desapareció: el rubro sale de MODULE_VERTICALS.
+    expect(campo().module).toBe('/dashboard/orders')
+    expect(campo().verticals).toBeUndefined()
+    expect(verticalsForRoute('/dashboard/orders')).toEqual(['food_service'])
     expect(permissionBelongsToVertical(campo(), FOOD)).toBe(true)
     expect(permissionBelongsToVertical(campo(), REAL)).toBe(false)
   })
@@ -263,11 +261,14 @@ describe('la taxonomía de rubros no se duplica', () => {
     expect(new Set(keys).size).toBe(9)
   })
 
-  it('el override de rubro es la excepción, no la regla', () => {
-    // Si esto crece, la "excepción" dejó de serlo y conviene revisar el diseño
-    // en vez de seguir agregando overrides.
+  it('NINGÚN permiso usa el override de rubro', () => {
+    // Fase 3E-C3C — antes esto esperaba ['can_manage_orders']: era la única
+    // excepción, y existía solo porque /dashboard/orders todavía no existía.
+    // Ahora el módulo existe y el rubro se deriva. Si esta lista vuelve a
+    // crecer, alguien está construyendo una segunda taxonomía de rubros en vez
+    // de declarar el módulo en MODULE_VERTICALS.
     const conOverride = PERMISSION_FIELDS.filter((f) => f.verticals)
-    expect(conOverride.map((f) => f.key)).toEqual(['can_manage_orders'])
+    expect(conOverride.map((f) => f.key)).toEqual([])
   })
 
   it('un permiso con override solo se justifica si su módulo es transversal', () => {
