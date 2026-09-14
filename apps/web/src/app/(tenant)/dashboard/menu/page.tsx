@@ -57,6 +57,9 @@ export default async function MenuPage() {
         published:      item.published,
         available:      item.available,
         archived:       item.deleted_at !== null,
+        // Solo la URL. image_storage_path se queda en el servidor: es interno y
+        // no tiene por qué viajar al browser, tampoco al del dashboard.
+        imageUrl:       item.image_url,
       }
     })
 

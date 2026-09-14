@@ -1047,6 +1047,8 @@ export type Database = {
           deleted_at: string | null
           description: string | null
           id: string
+          image_storage_path: string | null
+          image_url: string | null
           name: string
           published: boolean
           sort_order: number
@@ -1061,6 +1063,8 @@ export type Database = {
           deleted_at?: string | null
           description?: string | null
           id?: string
+          image_storage_path?: string | null
+          image_url?: string | null
           name: string
           published?: boolean
           sort_order?: number
@@ -1075,6 +1079,8 @@ export type Database = {
           deleted_at?: string | null
           description?: string | null
           id?: string
+          image_storage_path?: string | null
+          image_url?: string | null
           name?: string
           published?: boolean
           sort_order?: number

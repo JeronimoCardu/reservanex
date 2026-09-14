@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useMemo, useRef, useState, useTransition } from 'react'
+import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import {
   ChefHatIcon,
@@ -14,6 +15,9 @@ import {
   ChevronUpIcon,
   ChevronDownIcon,
   AlertCircleIcon,
+  ImageIcon,
+  ImagePlusIcon,
+  Trash2Icon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -21,6 +25,8 @@ import {
   saveMenuItemsAction,
   setMenuItemArchivedAction,
   moveMenuItemAction,
+  uploadMenuImageAction,
+  removeMenuImageAction,
 } from '@/actions/menu'
 import type { MenuCategory } from '@/lib/repositories/menu.repository'
 import {
@@ -84,7 +90,7 @@ import { MenuCategoriesDialog } from './menu-categories-dialog'
 // corresponde a lo que hay en la base.
 
 const COLS =
-  'md:grid md:grid-cols-[132px_minmax(0,1.15fr)_minmax(0,1.5fr)_118px_76px_86px_78px_52px] md:items-start md:gap-2'
+  'md:grid md:grid-cols-[56px_128px_minmax(0,1.1fr)_minmax(0,1.4fr)_114px_74px_84px_76px_52px] md:items-start md:gap-2'
 
 const CAMPO = 'h-9 w-full rounded-md border border-input bg-transparent px-2 py-1 text-sm shadow-sm ' +
   'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ' +
@@ -223,13 +229,19 @@ export function MenuClient({
   }
 
   function ejecutar(
-    fn: () => Promise<{ success: boolean; error?: string }>,
+    fn: () => Promise<{ success: boolean; error?: string; warning?: string }>,
     exito: string,
   ) {
     startTransition(async () => {
       const res = await fn()
-      if (res.success) { toast.success(exito); router.refresh() }
-      else toast.error(res.error ?? 'Algo salió mal.')
+      if (res.success) {
+        // Un warning es un éxito con una salvedad —por ejemplo, la fila se
+        // actualizó pero quedó un archivo huérfano—: se dice, no se esconde
+        // detrás de un "listo".
+        if (res.warning) toast.warning(res.warning)
+        else toast.success(exito)
+        router.refresh()
+      } else toast.error(res.error ?? 'Algo salió mal.')
     })
   }
 
@@ -258,6 +270,27 @@ export function MenuClient({
         )
       }
       router.refresh()
+    })
+  }
+
+  /**
+   * Subir/reemplazar la foto de un producto.
+   *
+   * NO entra en el lote de campos de texto: es un archivo, necesita su propio
+   * request multipart y su propio orden seguro en el servidor. Y como refresca
+   * datos del servidor, queda bloqueada mientras haya cambios sin guardar —
+   * igual que crear, archivar y reordenar.
+   */
+  function subirImagen(itemId: string, file: File) {
+    const fd = new FormData()
+    fd.append('file', file)
+    startTransition(async () => {
+      const res = await uploadMenuImageAction(itemId, fd)
+      if (res.success) {
+        if (res.warning) toast.warning(res.warning)
+        else toast.success('Imagen actualizada.')
+        router.refresh()
+      } else toast.error(res.error)
     })
   }
 
@@ -415,6 +448,9 @@ export function MenuClient({
       {canManage && creando && (
         <div className="border-b bg-muted/30 px-4 py-3 sm:px-6">
           <div className={cn('space-y-2 md:space-y-0', COLS)}>
+            {/* La foto se sube DESPUÉS de crear el producto: hace falta su id
+                para armar el path y guardar la URL. */}
+            <div className="hidden md:block" aria-hidden="true" />
             <div>
               <Etiqueta>Categoría</Etiqueta>
               <Select
@@ -458,7 +494,7 @@ export function MenuClient({
                 onChange={(e) => setNuevo((n) => ({ ...n, price: e.target.value }))}
               />
             </div>
-            <div className="md:col-span-4 md:flex md:items-center md:justify-end md:gap-2">
+            <div className="md:col-span-5 md:flex md:items-center md:justify-end md:gap-2">
               <p className="mb-2 text-xs text-muted-foreground md:mb-0 md:mr-auto">
                 Nace como borrador y disponible.
               </p>
@@ -480,7 +516,7 @@ export function MenuClient({
 
       {/* ── Encabezado de la grilla (solo md+) ── */}
       <div className={cn('hidden border-b bg-muted/40 px-4 py-2 sm:px-6 md:block', COLS)}>
-        {['Categoría', 'Producto', 'Descripción', `Precio (${currency})`, 'Publicado', 'Disponible', 'Registro', ''].map((h, i) => (
+        {['Foto', 'Categoría', 'Producto', 'Descripción', `Precio (${currency})`, 'Publicado', 'Disponible', 'Registro', ''].map((h, i) => (
           <span key={i} className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{h}</span>
         ))}
       </div>
@@ -524,6 +560,17 @@ export function MenuClient({
                     fallo && 'bg-red-50/70',
                   )}
                 >
+                  <div>
+                    <Etiqueta>Foto</Etiqueta>
+                    <ImagenDeFila
+                      row={row}
+                      canManage={canManage}
+                      disabled={isPending || bloqueadoPorCambios}
+                      bloqueadoPorCambios={bloqueadoPorCambios}
+                      onSubir={(file) => subirImagen(row.id, file)}
+                    />
+                  </div>
+
                   <div>
                     <Etiqueta>Categoría</Etiqueta>
                     <Select
@@ -646,6 +693,14 @@ export function MenuClient({
                           >
                             <ChevronDownIcon className="mr-2 h-4 w-4" /> Bajar
                           </DropdownMenuItem>
+                          {row.imageUrl && (
+                            <DropdownMenuItem
+                              disabled={isPending || bloqueadoPorCambios}
+                              onClick={() => ejecutar(() => removeMenuImageAction(row.id), 'Imagen quitada.')}
+                            >
+                              <Trash2Icon className="mr-2 h-4 w-4" /> Quitar imagen
+                            </DropdownMenuItem>
+                          )}
                           {row.archived ? (
                             <DropdownMenuItem
                               disabled={isPending || bloqueadoPorCambios}
@@ -705,6 +760,88 @@ export function MenuClient({
         canManage={canManage}
       />
     </div>
+  )
+}
+
+/**
+ * La miniatura y el disparador de subida.
+ *
+ * Un input file escondido detrás del propio thumbnail: un click sube o
+ * reemplaza, sin diálogo. Quitar vive en el menú ⋯ porque es menos frecuente y
+ * es destructivo.
+ */
+function ImagenDeFila({
+  row, canManage, disabled, bloqueadoPorCambios, onSubir,
+}: {
+  row: MenuGridRow
+  canManage: boolean
+  disabled: boolean
+  bloqueadoPorCambios: boolean
+  onSubir: (file: File) => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const marco = 'relative h-12 w-12 shrink-0 overflow-hidden rounded-md border bg-muted md:h-10 md:w-10'
+
+  const contenido = row.imageUrl ? (
+    <Image
+      src={row.imageUrl}
+      alt={row.name}
+      fill
+      className="object-cover"
+      sizes="48px"
+    />
+  ) : (
+    <span className="flex h-full w-full items-center justify-center">
+      <ImageIcon className="h-4 w-4 text-muted-foreground/40" aria-hidden="true" />
+    </span>
+  )
+
+  if (!canManage) {
+    return (
+      <div className={marco} title={row.imageUrl ? row.name : 'Sin foto'}>
+        {contenido}
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="hidden"
+        aria-label={`Foto de ${row.name}`}
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          // Se limpia el input para que elegir el MISMO archivo otra vez vuelva
+          // a disparar onChange.
+          e.target.value = ''
+          if (file) onSubir(file)
+        }}
+      />
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => inputRef.current?.click()}
+        title={
+          bloqueadoPorCambios ? 'Guardá o descartá los cambios primero'
+            : row.imageUrl ? 'Reemplazar foto' : 'Subir foto (JPG, PNG o WebP, hasta 5 MB)'
+        }
+        className={cn(
+          marco, 'group transition-colors',
+          disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:border-primary',
+        )}
+      >
+        {contenido}
+        {!disabled && (
+          <span className="absolute inset-0 hidden items-center justify-center bg-black/45 group-hover:flex">
+            <ImagePlusIcon className="h-4 w-4 text-white" aria-hidden="true" />
+          </span>
+        )}
+      </button>
+    </>
   )
 }
 

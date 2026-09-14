@@ -376,3 +376,110 @@ export async function getPropertyBlockedIntervals(
 
   return intervals
 }
+
+// ── Menú público (Fase 3E-C3A2) ───────────────────────────────────────────────
+//
+// Mismo modelo de confianza que listPublicProperties: createAdminClient() en el
+// SERVIDOR con filtros explícitos, NO policies para anon. Las tablas del
+// catálogo no le conceden nada a anon y así queda — el sitio público no es un
+// cliente de la base, es un render del servidor.
+//
+// ── QUÉ SALE Y QUÉ NO ───────────────────────────────────────────────────────
+//
+// Esto alimenta un componente cliente, así que TODO lo que devuelva viaja al
+// browser en el payload de hidratación, lo renderice o no. Por eso el select
+// es una lista literal y no un `*`:
+//
+//   NO salen  image_storage_path (interno, sirve para purgar Storage)
+//             deleted_at · published · sort_order de items · tenant_id
+//             created_at · updated_at · category.active
+//
+//   SÍ salen  lo que la carta muestra, y nada más.
+
+export type PublicMenuItem = {
+  id:          string
+  name:        string
+  description: string | null
+  base_price:  number
+  image_url:   string | null
+  /** Se muestra igual, atenuado y con "No disponible". Decisión de producto. */
+  available:   boolean
+}
+
+export type PublicMenuCategory = {
+  id:    string
+  name:  string
+  items: PublicMenuItem[]
+}
+
+/**
+ * La carta pública de un tenant gastronómico.
+ *
+ * Filtros obligatorios:
+ *   category.active = true      una categoría apagada no existe para el público
+ *   item.published  = true      los borradores no se muestran
+ *   item.deleted_at IS NULL     los archivados tampoco
+ *
+ * available = false NO filtra: esos items se muestran marcados como no
+ * disponibles. Es una decisión de producto cerrada — esconderlos haría parecer
+ * que el plato se discontinuó.
+ *
+ * Orden: category.sort_order → item.sort_order. Las categorías que queden sin
+ * items visibles no se devuelven: un encabezado vacío en la carta es ruido.
+ */
+export async function listPublicMenu(tenantId: string): Promise<PublicMenuCategory[]> {
+  const supabase = createAdminClient()
+
+  const { data: cats, error: catErr } = await supabase
+    .from('menu_categories')
+    .select('id, name, sort_order')
+    .eq('tenant_id', tenantId)
+    .eq('active', true)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true })
+
+  if (catErr || !cats || cats.length === 0) return []
+
+  const { data: items, error: itemErr } = await supabase
+    .from('menu_items')
+    .select('id, category_id, name, description, base_price, image_url, available, sort_order')
+    .eq('tenant_id', tenantId)
+    .eq('published', true)
+    .is('deleted_at', null)
+    .in('category_id', cats.map((c) => c.id))
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true })
+
+  if (itemErr || !items) return []
+
+  const porCategoria = new Map<string, PublicMenuItem[]>()
+  for (const item of items) {
+    const lista = porCategoria.get(item.category_id) ?? []
+    lista.push({
+      id:          item.id,
+      name:        item.name,
+      description: item.description,
+      base_price:  item.base_price,
+      image_url:   item.image_url,
+      available:   item.available,
+    })
+    porCategoria.set(item.category_id, lista)
+  }
+
+  return cats
+    .map((c) => ({ id: c.id, name: c.name, items: porCategoria.get(c.id) ?? [] }))
+    .filter((c) => c.items.length > 0)
+}
+
+/** La moneda del tenant, para mostrar los precios de la carta. */
+export async function getPublicTenantCurrency(tenantId: string): Promise<string> {
+  const supabase = createAdminClient()
+  const { data } = await supabase
+    .from('tenants')
+    .select('currency')
+    .eq('id', tenantId)
+    .maybeSingle()
+
+  // La columna es NOT NULL DEFAULT 'ARS'; esto solo cubre no poder leer la fila.
+  return data?.currency ?? 'ARS'
+}

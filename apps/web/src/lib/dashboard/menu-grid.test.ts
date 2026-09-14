@@ -41,6 +41,7 @@ function row(over: Partial<MenuGridRow> & { id: string }): MenuGridRow {
     published:      false,
     available:      true,
     archived:       false,
+    imageUrl:       null,
     ...over,
   }
 }

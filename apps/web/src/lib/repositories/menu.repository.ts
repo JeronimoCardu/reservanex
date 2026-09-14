@@ -38,11 +38,19 @@ export type MenuItem = {
   available:   boolean
   sort_order:  number
   deleted_at:  string | null
+  /** URL pública de la foto. Va siempre junto con image_storage_path. */
+  image_url:   string | null
+  /**
+   * Ruta interna en el bucket menu-images. NUNCA sale al sitio público: es el
+   * dato que permite reemplazar, borrar y purgar el archivo.
+   */
+  image_storage_path: string | null
 }
 
 const CATEGORY_COLS = 'id, name, sort_order, active'
-const ITEM_COLS =
-  'id, category_id, name, description, base_price, published, available, sort_order, deleted_at'
+// Literal en una sola línea a propósito: supabase-js infiere el tipo de la fila
+// leyendo esta cadena, y un select armado por concatenación le devuelve `any`.
+const ITEM_COLS = 'id, category_id, name, description, base_price, published, available, sort_order, deleted_at, image_url, image_storage_path'
 
 /** Error de unicidad de Postgres. La lanza el índice normalizado de categorías. */
 export const UNIQUE_VIOLATION = '23505'
@@ -446,6 +454,55 @@ export async function setMenuItemArchived(
   const { error } = await supabase
     .from('menu_items')
     .update({ deleted_at: archived ? new Date().toISOString() : null })
+    .eq('id', id)
+    .eq('tenant_id', tenantId)
+
+  if (error) fail(error)
+}
+
+// ── Imagen ────────────────────────────────────────────────────────────────────
+
+/**
+ * La imagen actual de un item, o null si no existe / no es de este tenant.
+ *
+ * Se usa antes de reemplazar y antes de quitar: hace falta saber qué archivo
+ * viejo hay que borrar, y confirmar que el item es del tenant que pide.
+ */
+export async function getMenuItemImage(
+  tenantId: string,
+  id: string,
+): Promise<{ image_url: string | null; image_storage_path: string | null } | null> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('menu_items')
+    .select('image_url, image_storage_path')
+    .eq('id', id)
+    .eq('tenant_id', tenantId)
+    .maybeSingle()
+
+  if (error) fail(error)
+  return data ?? null
+}
+
+/**
+ * Persiste (o limpia) la imagen de un item.
+ *
+ * Las dos columnas se escriben SIEMPRE juntas, porque el CHECK
+ * menu_items_image_coherence_check no admite una sin la otra: pasar null en las
+ * dos es quitar la imagen, pasar las dos es ponerla. No hay un tercer caso.
+ */
+export async function setMenuItemImage(
+  tenantId: string,
+  id: string,
+  image: { url: string; storagePath: string } | null,
+): Promise<void> {
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from('menu_items')
+    .update({
+      image_url:          image?.url ?? null,
+      image_storage_path: image?.storagePath ?? null,
+    })
     .eq('id', id)
     .eq('tenant_id', tenantId)
 

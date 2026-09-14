@@ -99,6 +99,22 @@ export async function collectTenantStorageObjects(
     }
   }
 
+  // ── menu_items — foto del producto (Fase 3E-C3A2) ─────────────────────────
+  //
+  // image_storage_path es la fuente REAL: es la ruta tal cual se subió. La URL
+  // se usa solo como respaldo por si alguna fila quedara con url y sin path —
+  // cosa que menu_items_image_coherence_check impide, pero el mismo criterio
+  // defensivo que ya usan el logo y el cover del tenant no cuesta nada acá.
+  const { data: menuImgs } = await admin
+    .from('menu_items')
+    .select('image_storage_path, image_url')
+    .eq('tenant_id', tenantId)
+    .not('image_storage_path', 'is', null)
+  for (const m of menuImgs ?? []) {
+    const path = m.image_storage_path ?? extractStoragePathFromPublicUrl('menu-images', m.image_url)
+    if (path) raw.push({ bucket: 'menu-images', path, source: 'menu_items.image_storage_path' })
+  }
+
   // ── tenants — public-site branding + legacy internal logo ──────────────────
   const { data: tenant } = await admin
     .from('tenants')

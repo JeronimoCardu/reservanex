@@ -28,6 +28,15 @@ export interface MenuGridRow {
   published:      boolean
   available:      boolean
   archived:       boolean
+  /**
+   * URL pública de la foto, o null. NO forma parte del borrador: subirla y
+   * quitarla son acciones propias que escriben en el servidor al instante, no
+   * campos que se editan y se guardan con el lote.
+   *
+   * image_storage_path NO está acá: es interno y no tiene por qué llegar al
+   * browser, ni siquiera al del dashboard.
+   */
+  imageUrl:       string | null
 }
 
 /** Los campos que el usuario puede editar en la fila. */

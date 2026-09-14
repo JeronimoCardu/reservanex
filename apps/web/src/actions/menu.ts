@@ -1,6 +1,8 @@
 'use server'
 
+import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
+import { createClient } from '@orderflow/supabase/server'
 import {
   createMenuCategorySchema,
   updateMenuCategorySchema,
@@ -304,6 +306,156 @@ export async function setMenuItemArchivedAction(
     console.error('[menu] setMenuItemArchivedAction failed:', err)
     return { success: false, error: mensajeDeError(err, 'item') }
   }
+}
+
+// ─── Imágenes ────────────────────────────────────────────────────────────────
+
+const MENU_BUCKET = 'menu-images'
+const IMG_MIME    = ['image/jpeg', 'image/png', 'image/webp'] as const
+const IMG_MAX     = 5 * 1024 * 1024
+
+const EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png':  'png',
+  'image/webp': 'webp',
+}
+
+/**
+ * Sube (o reemplaza) la foto de un producto.
+ *
+ * ── EL TENANT NUNCA VIENE DEL BROWSER ─────────────────────────────────────
+ * Sale de requireTenantContext(). El path se arma con ese tenant, y además la
+ * policy de storage exige que el primer segmento sea auth_tenant_id(): aunque
+ * alguien llamara a esta action con otro item, no podría escribir fuera de su
+ * carpeta.
+ *
+ * ── ORDEN SEGURO AL REEMPLAZAR (§6) ───────────────────────────────────────
+ *   1. sube la nueva (uuid nuevo, upsert:false — nunca pisa un objeto)
+ *   2. actualiza la DB
+ *   3. recién entonces borra la anterior
+ *
+ * Al revés —borrar y después subir— un fallo en el medio dejaría al producto
+ * sin imagen. Así, el peor caso es un archivo viejo que sobrevive, y eso no
+ * rompe nada: queda registrado en el log y la purga del tenant lo levanta igual
+ * porque enumera por fila, no por prefijo... salvo que la fila ya apunte a la
+ * nueva. Por eso el huérfano se reporta explícitamente en vez de esconderse.
+ */
+export async function uploadMenuImageAction(
+  itemId: string,
+  formData: FormData,
+): Promise<ActionResult<{ publicUrl: string; storagePath: string }>> {
+  const g = await guard()
+  if (!g.ok) return { success: false, error: g.error }
+
+  const raw = formData.get('file')
+  if (!raw || typeof raw === 'string') {
+    return { success: false, error: 'No se recibió ningún archivo.' }
+  }
+  const file = raw as File
+
+  if (!IMG_MIME.includes(file.type as (typeof IMG_MIME)[number])) {
+    return { success: false, error: 'Solo se admiten imágenes JPG, PNG o WebP.' }
+  }
+  if (file.size > IMG_MAX) {
+    return { success: false, error: 'La imagen no puede superar 5 MB.' }
+  }
+  if (file.size === 0) {
+    return { success: false, error: 'El archivo está vacío.' }
+  }
+
+  // El item tiene que existir y ser de este tenant. Se lee con el cliente del
+  // usuario, así que RLS ya lo limita a su tenant; el maybeSingle vacío cubre
+  // tanto "no existe" como "es de otro".
+  const actual = await repo.getMenuItemImage(g.ctx.tenantId, itemId).catch(() => null)
+  if (!actual) return { success: false, error: 'Producto no encontrado.' }
+
+  const path = `${g.ctx.tenantId}/${randomUUID()}.${EXT[file.type]}`
+
+  // Cliente del USUARIO: las policies de storage.objects son la autoridad, igual
+  // que RLS lo es para las tablas.
+  const supabase = await createClient()
+  const { error: upErr } = await supabase.storage
+    .from(MENU_BUCKET)
+    .upload(path, file, { contentType: file.type, upsert: false })
+
+  if (upErr) {
+    console.error('[menu] uploadMenuImageAction: upload failed', { code: upErr.message })
+    return { success: false, error: 'Error al subir la imagen. Intentá de nuevo.' }
+  }
+
+  const { data: urlData } = supabase.storage.from(MENU_BUCKET).getPublicUrl(path)
+  const publicUrl = urlData.publicUrl
+
+  try {
+    await repo.setMenuItemImage(g.ctx.tenantId, itemId, { url: publicUrl, storagePath: path })
+  } catch (err) {
+    // La DB no quedó apuntando al archivo nuevo: se borra para no dejar basura.
+    await supabase.storage.from(MENU_BUCKET).remove([path]).catch(() => undefined)
+    console.error('[menu] uploadMenuImageAction: db update failed', err)
+    return { success: false, error: mensajeDeError(err, 'item') }
+  }
+
+  // Paso 3: la anterior, si había. Ya no la referencia nadie.
+  let warning: string | undefined
+  if (actual.image_storage_path && actual.image_storage_path !== path) {
+    const { error: delErr } = await supabase.storage
+      .from(MENU_BUCKET).remove([actual.image_storage_path])
+    if (delErr) {
+      // NO se rompe el item: la imagen nueva ya está guardada y visible. Queda
+      // un archivo huérfano, y se dice en voz alta en vez de fingir que no.
+      console.error('[menu] uploadMenuImageAction: orphan file left in storage', {
+        bucket: MENU_BUCKET, path: actual.image_storage_path, reason: delErr.message,
+      })
+      warning = 'La imagen se guardó, pero no se pudo borrar la anterior del almacenamiento.'
+    }
+  }
+
+  revalidatePath(MENU_PATH)
+  return { success: true, data: { publicUrl, storagePath: path }, ...(warning && { warning }) }
+}
+
+/**
+ * Quita la foto de un producto. NO archiva el item: la imagen es opcional.
+ *
+ * Orden inverso al de subir, y por la misma razón: primero se limpia la DB y
+ * después el archivo. Si el borrado del archivo falla, el producto ya quedó sin
+ * imagen (que es lo que se pidió) y lo único que sobra es un objeto huérfano
+ * reportado. Al revés, un fallo entre borrar el archivo y limpiar la DB dejaría
+ * al item apuntando a una imagen rota.
+ */
+export async function removeMenuImageAction(itemId: string): Promise<ActionResult> {
+  const g = await guard()
+  if (!g.ok) return { success: false, error: g.error }
+
+  const actual = await repo.getMenuItemImage(g.ctx.tenantId, itemId).catch(() => null)
+  if (!actual) return { success: false, error: 'Producto no encontrado.' }
+  if (!actual.image_storage_path) {
+    return { success: false, error: 'Ese producto no tiene imagen.' }
+  }
+
+  try {
+    await repo.setMenuItemImage(g.ctx.tenantId, itemId, null)
+  } catch (err) {
+    console.error('[menu] removeMenuImageAction: db update failed', err)
+    return { success: false, error: mensajeDeError(err, 'item') }
+  }
+
+  const supabase = await createClient()
+  const { error: delErr } = await supabase.storage
+    .from(MENU_BUCKET).remove([actual.image_storage_path])
+
+  revalidatePath(MENU_PATH)
+
+  if (delErr) {
+    console.error('[menu] removeMenuImageAction: orphan file left in storage', {
+      bucket: MENU_BUCKET, path: actual.image_storage_path, reason: delErr.message,
+    })
+    return {
+      success: true,
+      warning: 'Se quitó la imagen del producto, pero el archivo sigue en el almacenamiento.',
+    }
+  }
+  return { success: true }
 }
 
 export async function moveMenuItemAction(

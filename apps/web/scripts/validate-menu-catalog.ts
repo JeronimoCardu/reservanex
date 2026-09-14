@@ -30,6 +30,7 @@ import {
 import { computeReorder } from '../src/lib/dashboard/reorder'
 import { assertSafeSupabaseTarget } from './assert-safe-target'
 import { generateSubmissionReference } from '../src/lib/forms/submission-reference'
+import { listPublicMenu, getPublicTenantCurrency } from '../src/lib/repositories/public-site.repository'
 
 const HR = '─'.repeat(78)
 let passed = 0, failed = 0
@@ -756,6 +757,361 @@ async function main() {
     if (catAHrecep.id) ok('AH. y la recepcionista con can_manage_menu también sigue escribiendo')
     else nok('AH. la recepcionista con permiso dejó de poder escribir', JSON.stringify(catAHrecep.error))
 
+    console.log(`\n${HR}\n  Imágenes del menú (storage)`)
+
+    const BUCKET = 'menu-images'
+    // 1×1 PNG real. No alcanza con bytes al azar: el bucket valida el MIME que
+    // se declara, y queremos que lo que se rechace sea lo que decimos.
+    const PNG_1x1 = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    )
+    const archivo = (bytes: Buffer, type: string) => new Blob([new Uint8Array(bytes)], { type })
+
+    /** Sube al bucket con un cliente dado y devuelve el error crudo. */
+    async function subir(
+      c: SupabaseClient<Database>, path: string,
+      { bytes = PNG_1x1, type = 'image/png' }: { bytes?: Buffer; type?: string } = {},
+    ): Promise<PgError> {
+      const { error } = await c.storage.from(BUCKET)
+        .upload(path, archivo(bytes, type), { contentType: type, upsert: false })
+      return error ? { message: error.message } : null
+    }
+
+    const subidos: string[] = []
+    const pathDe = (tenantId: string) => `${tenantId}/${randomUUID()}.png`
+
+    // ── A. owner food_service ────────────────────────────────────────────────
+    {
+      const path = pathDe(A.id)
+      const e = await subir(asOwnerA, path)
+      if (!e) { ok('A. el owner de un tenant food_service sube una imagen'); subidos.push(path) }
+      else nok('A. el owner no pudo subir', JSON.stringify(e))
+    }
+
+    // ── B. recepcionista con can_manage_menu ─────────────────────────────────
+    {
+      const path = pathDe(A.id)
+      const e = await subir(asMenuA, path)
+      if (!e) { ok('B. una recepcionista con can_manage_menu sube'); subidos.push(path) }
+      else nok('B. can_manage_menu no alcanzó para subir', JSON.stringify(e))
+    }
+
+    // ── C. recepcionista SIN permiso ─────────────────────────────────────────
+    {
+      const path = pathDe(A.id)
+      const e = await subir(asNoA, path)
+      if (e) ok('C. una recepcionista sin permiso NO sube — la policy de storage la frena')
+      else { nok('C. una recepcionista sin permiso subió'); subidos.push(path) }
+    }
+
+    // ── D. tenant real_estate ────────────────────────────────────────────────
+    // Su owner cumple rol y tenant; lo único que lo frena es el rubro.
+    {
+      const path = pathDe(R.id)
+      const e = await subir(asOwnerR, path)
+      if (e) ok('D. el owner de un tenant real_estate NO sube al bucket del menú — la policy exige food_service')
+      else { nok('D. un tenant real_estate pudo subir imágenes de menú'); subidos.push(path) }
+    }
+
+    // ── E. cross tenant ──────────────────────────────────────────────────────
+    {
+      const path = pathDe(B.id)   // carpeta del tenant B, sesión del tenant A
+      const e = await subir(asOwnerA, path)
+      if (e) ok('E. cross-tenant bloqueado: el owner de A no escribe en la carpeta de B')
+      else { nok('E. se pudo escribir en la carpeta de otro tenant'); subidos.push(path) }
+    }
+
+    // ── F. MIME inválido ─────────────────────────────────────────────────────
+    {
+      const path = `${A.id}/${randomUUID()}.txt`
+      const e = await subir(asOwnerA, path, { bytes: Buffer.from('hola'), type: 'text/plain' })
+      if (e) ok('F. MIME no permitido rechazado por el bucket (solo jpeg/png/webp)')
+      else { nok('F. entró un archivo de MIME no permitido'); subidos.push(path) }
+    }
+
+    // ── G. más de 5 MB ───────────────────────────────────────────────────────
+    {
+      const path = pathDe(A.id)
+      const grande = Buffer.alloc(5 * 1024 * 1024 + 1024, 0)
+      const e = await subir(asOwnerA, path, { bytes: grande })
+      if (e) ok('G. un archivo de más de 5 MB lo rechaza el propio bucket (file_size_limit)')
+      else { nok('G. entró un archivo de más de 5 MB'); subidos.push(path) }
+    }
+
+    // ── M. anon ──────────────────────────────────────────────────────────────
+    {
+      const path = pathDe(A.id)
+      const e = await subir(anonClient(), path)
+      if (e) ok('M. anon no escribe en el bucket del menú')
+      else { nok('M. anon pudo subir'); subidos.push(path) }
+    }
+
+    // ── N. lectura pública ───────────────────────────────────────────────────
+    {
+      const path = subidos[0]
+      if (!path) nok('N. no hay ningún archivo subido para probar la lectura')
+      else {
+        const { data } = admin.storage.from(BUCKET).getPublicUrl(path)
+        const res = await fetch(data.publicUrl)
+        if (res.ok) ok(`N. la imagen se lee públicamente sin sesión (HTTP ${res.status})`)
+        else nok('N. la lectura pública falló', `HTTP ${res.status}`)
+      }
+    }
+
+    // ── H/I. path y coherencia url+path en la DB ─────────────────────────────
+    {
+      const path = subidos[0]!
+      if (!path.startsWith(`${A.id}/`)) nok('H. el path no empieza con el tenant', path)
+      else ok(`H. el path empieza con el tenant: ${A.id}/…`)
+
+      const { data: url } = admin.storage.from(BUCKET).getPublicUrl(path)
+      const catImg = await crearCat(asOwnerA, A.id, `ConFoto ${RUN}`, 70)
+      const itemImg = await crearItem(asOwnerA, A.id, catImg.id!, `Con foto ${RUN}`, 100, 0)
+
+      const { error: eOk } = await admin.from('menu_items')
+        .update({ image_url: url.publicUrl, image_storage_path: path } as never)
+        .eq('id', itemImg.id!)
+      if (!eOk) ok('I. la DB acepta url + path juntos')
+      else nok('I. no se pudo guardar la imagen', JSON.stringify(eOk))
+
+      // Y rechaza cualquier estado incoherente, incluso con service_role.
+      const { error: eSolaUrl } = await admin.from('menu_items')
+        .update({ image_url: url.publicUrl, image_storage_path: null } as never)
+        .eq('id', itemImg.id!)
+      const { error: eSoloPath } = await admin.from('menu_items')
+        .update({ image_url: null, image_storage_path: path } as never)
+        .eq('id', itemImg.id!)
+      if (eSolaUrl?.code === '23514' && eSoloPath?.code === '23514') {
+        ok('I. y rechaza url sin path y path sin url (23514), incluso con service_role')
+      } else nok('I. el CHECK de coherencia no frenó un estado inconsistente',
+        JSON.stringify({ eSolaUrl, eSoloPath }))
+
+      // ── K. quitar la imagen limpia las DOS columnas ────────────────────────
+      const { error: eLimpiar } = await admin.from('menu_items')
+        .update({ image_url: null, image_storage_path: null } as never)
+        .eq('id', itemImg.id!)
+      const { data: limpio } = await admin.from('menu_items')
+        .select('image_url, image_storage_path, deleted_at')
+        .eq('id', itemImg.id!).maybeSingle()
+      const l = limpio as { image_url: string | null; image_storage_path: string | null; deleted_at: string | null } | null
+      if (!eLimpiar && l?.image_url === null && l.image_storage_path === null && l.deleted_at === null) {
+        ok('K. quitar la imagen deja las dos columnas en NULL y NO archiva el producto')
+      } else nok('K. quitar la imagen no dejó el estado esperado', JSON.stringify({ eLimpiar, l }))
+
+      // Se vuelve a poner para que L tenga algo que purgar.
+      await admin.from('menu_items')
+        .update({ image_url: url.publicUrl, image_storage_path: path } as never)
+        .eq('id', itemImg.id!)
+    }
+
+    // ── L. la purga del tenant levanta las imágenes del menú ─────────────────
+    {
+      const { collectTenantStorageObjects } = await import('../src/lib/repositories/tenant-storage.repository')
+      const { refs, warnings } = await collectTenantStorageObjects(A.id)
+      const delMenu = refs.filter((r) => r.bucket === BUCKET)
+
+      if (delMenu.length > 0 && delMenu.every((r) => r.path.startsWith(`${A.id}/`))) {
+        ok(`L. la purga de tenant enumera ${delMenu.length} archivo(s) de menu-images (Storage no tiene ON DELETE CASCADE)`)
+      } else nok('L. la purga no encontró las imágenes del menú',
+        JSON.stringify({ refs: refs.length, delMenu: delMenu.length, warnings }))
+
+      if (delMenu.every((r) => r.source === 'menu_items.image_storage_path')) {
+        ok('L. y las atribuye a su columna de origen')
+      } else nok('L. la fuente reportada no es la esperada')
+    }
+
+    console.log(`\n${HR}\n  Menú público`)
+
+    // Se arma una carta con los cinco casos que el sitio tiene que distinguir.
+    {
+      const catVisible  = await crearCat(asOwnerA, A.id, `Pizzas ${RUN}`, 90)
+      const catOculta   = await crearCat(asOwnerA, A.id, `Ocultas ${RUN}`, 91)
+      const catSinItems = await crearCat(asOwnerA, A.id, `Vacia ${RUN}`, 92)
+
+      const pubDisp   = await crearItem(asOwnerA, A.id, catVisible.id!, `Muzzarella ${RUN}`, '10000.00', 0)
+      const pubNoDisp = await crearItem(asOwnerA, A.id, catVisible.id!, `Napolitana ${RUN}`, '12000.00', 1)
+      const gratis    = await crearItem(asOwnerA, A.id, catVisible.id!, `Pan ${RUN}`, '0.00', 2)
+      const borrador  = await crearItem(asOwnerA, A.id, catVisible.id!, `Borrador ${RUN}`, '999.00', 3)
+      const archivado = await crearItem(asOwnerA, A.id, catVisible.id!, `Archivado ${RUN}`, '888.00', 4)
+      const enOculta  = await crearItem(asOwnerA, A.id, catOculta.id!,  `EnOculta ${RUN}`, '777.00', 0)
+
+      await admin.from('menu_items').update({ published: true } as never)
+        .in('id', [pubDisp.id!, pubNoDisp.id!, gratis.id!, archivado.id!, enOculta.id!])
+      await admin.from('menu_items').update({ available: false } as never).eq('id', pubNoDisp.id!)
+      await admin.from('menu_items').update({ deleted_at: new Date().toISOString() } as never).eq('id', archivado.id!)
+      await admin.from('menu_categories').update({ active: false } as never).eq('id', catOculta.id!)
+
+      const carta = await listPublicMenu(A.id)
+      const nombres = carta.flatMap((c) => c.items.map((i) => i.name))
+      const cats = carta.map((c) => c.name)
+
+      // Q
+      if (nombres.some((n) => n.startsWith('Muzzarella'))) ok('Q. categoría activa + item publicado → aparece')
+      else nok('Q. un item publicado de categoría activa no apareció', JSON.stringify(nombres))
+
+      // R
+      if (!cats.some((c) => c.startsWith('Ocultas')) && !nombres.some((n) => n.startsWith('EnOculta'))) {
+        ok('R. categoría inactiva → no aparece, ni ella ni sus items')
+      } else nok('R. una categoría inactiva apareció', JSON.stringify({ cats, nombres }))
+
+      // S
+      if (!nombres.some((n) => n.startsWith('Borrador'))) ok('S. item borrador → no aparece')
+      else nok('S. un borrador se publicó')
+
+      // T
+      if (!nombres.some((n) => n.startsWith('Archivado'))) ok('T. item archivado → no aparece')
+      else nok('T. un archivado se publicó')
+
+      // U
+      const noDisp = carta.flatMap((c) => c.items).find((i) => i.name.startsWith('Napolitana'))
+      if (noDisp && noDisp.available === false) {
+        ok('U. publicado + no disponible → SÍ aparece, marcado como no disponible')
+      } else nok('U. el item no disponible no apareció o vino mal', JSON.stringify(noDisp))
+
+      // X
+      if (!cats.some((c) => c.startsWith('Vacia'))) ok('X. una categoría sin items visibles no se renderiza')
+      else nok('X. apareció una categoría vacía')
+
+      // V / W
+      const cv = carta.find((c) => c.name.startsWith('Pizzas'))
+      const ordenItems = cv?.items.map((i) => i.name.split(' ')[0]) ?? []
+      if (JSON.stringify(ordenItems) === JSON.stringify(['Muzzarella', 'Napolitana', 'Pan'])) {
+        ok('W. los items salen en su sort_order')
+      } else nok('W. el orden de items no es el esperado', JSON.stringify(ordenItems))
+
+      const posiciones = carta.map((c) => c.name)
+      if (JSON.stringify(posiciones) === JSON.stringify([...posiciones].sort(
+        (a, b) => cats.indexOf(a) - cats.indexOf(b)))) {
+        ok(`V. las categorías salen en su sort_order: ${posiciones.join(' → ')}`)
+      } else nok('V. el orden de categorías no es el esperado', JSON.stringify(posiciones))
+
+      // Y / Z — el precio canónico llega tal cual; el copy es del componente.
+      const pan = carta.flatMap((c) => c.items).find((i) => i.name.startsWith('Pan'))
+      if (pan && Number(pan.base_price) === 0) ok('Z. el item gratis llega con base_price 0 (el copy "Gratis" es presentación)')
+      else nok('Z. el precio 0 no llegó como 0', JSON.stringify(pan))
+
+      const muz = carta.flatMap((c) => c.items).find((i) => i.name.startsWith('Muzzarella'))
+      if (muz && Number(muz.base_price) === 10000) ok('Y. los precios llegan con su valor canónico, sin recalcular')
+      else nok('Y. un precio no coincide', JSON.stringify(muz))
+
+      // AA — nada interno viaja
+      const claves = new Set(carta.flatMap((c) => [...Object.keys(c), ...c.items.flatMap((i) => Object.keys(i))]))
+      const prohibidas = ['image_storage_path', 'deleted_at', 'published', 'sort_order', 'tenant_id', 'created_at', 'updated_at', 'category_id', 'active']
+      const filtradas = prohibidas.filter((k) => claves.has(k))
+      if (filtradas.length === 0) {
+        ok(`AA. la carta pública solo expone: ${[...claves].sort().join(', ')}`)
+      } else nok('AA. salieron campos internos', filtradas.join(', '))
+
+      // R (contraprueba) — reactivar la categoría la devuelve
+      await admin.from('menu_categories').update({ active: true } as never).eq('id', catOculta.id!)
+      const carta2 = await listPublicMenu(A.id)
+      if (carta2.some((c) => c.name.startsWith('Ocultas'))) {
+        ok('R. y al reactivarla vuelve a aparecer, con sus items intactos')
+      } else nok('R. reactivar la categoría no la devolvió')
+      await admin.from('menu_categories').update({ active: false } as never).eq('id', catOculta.id!)
+
+      // O — un tenant sin catálogo devuelve una carta vacía, no un error
+      const cartaR = await listPublicMenu(R.id)
+      if (cartaR.length === 0) ok('O. un tenant sin catálogo publicado devuelve una carta vacía, sin romper')
+      else nok('O. un tenant inesperado devolvió categorías', JSON.stringify(cartaR.map((c) => c.name)))
+    }
+
+    console.log(`\n${HR}\n  Aislamiento multi-tenant de la carta pública`)
+
+    // ── Por qué esto necesita su propia prueba ────────────────────────────────
+    //
+    // listPublicMenu() lee con createAdminClient(). service_role SALTEA RLS, así
+    // que el aislamiento NO lo garantiza la base: lo garantizan los filtros que
+    // escribe la función. Un .eq('tenant_id') que alguien borre por parecer
+    // redundante no lo atrapa ningún trigger ni ninguna policy — solo un test.
+    //
+    // Las dos cartas se arman con categorías del MISMO nombre a propósito: si la
+    // función mezclara por nombre, o agrupara mal, acá se vería.
+    {
+      const NOMBRE_CAT = `Pizzas MT ${RUN}`
+
+      const catA = await crearCat(asOwnerA, A.id, NOMBRE_CAT, 95)
+      const catB = await crearCat(asOwnerB, B.id, NOMBRE_CAT, 95)
+      if (!catA.id || !catB.id) {
+        nok('MT. no se pudieron crear las dos categorías homónimas', JSON.stringify({ catA, catB }))
+      }
+
+      const itemA = await crearItem(asOwnerA, A.id, catA.id!, `Muzzarella A ${RUN}`, '11111.00', 0)
+      const itemB = await crearItem(asOwnerB, B.id, catB.id!, `Muzzarella B ${RUN}`, '22222.00', 0)
+      await admin.from('menu_items').update({ published: true } as never)
+        .in('id', [itemA.id!, itemB.id!])
+
+      if (catA.id && catB.id && itemA.id && itemB.id) {
+        ok(`MT. fixture: dos tenants food_service con una categoría llamada igual ("${NOMBRE_CAT}") y un item publicado cada uno`)
+      } else nok('MT. no se pudo armar el fixture cross-tenant')
+
+      const cartaA = await listPublicMenu(A.id)
+      const cartaB = await listPublicMenu(B.id)
+
+      const nombresA = cartaA.flatMap((c) => c.items.map((i) => i.name))
+      const nombresB = cartaB.flatMap((c) => c.items.map((i) => i.name))
+
+      // ── Los items no se cruzan ──
+      const aTieneSuyo  = nombresA.some((n) => n.startsWith('Muzzarella A'))
+      const aNoTieneOtro = !nombresA.some((n) => n.startsWith('Muzzarella B'))
+      if (aTieneSuyo && aNoTieneOtro) {
+        ok('MT. listPublicMenu(A) trae Muzzarella A y NO trae Muzzarella B')
+      } else nok('MT. la carta de A se mezcló', JSON.stringify({ aTieneSuyo, aNoTieneOtro, nombresA }))
+
+      const bTieneSuyo   = nombresB.some((n) => n.startsWith('Muzzarella B'))
+      const bNoTieneOtro = !nombresB.some((n) => n.startsWith('Muzzarella A'))
+      if (bTieneSuyo && bNoTieneOtro) {
+        ok('MT. listPublicMenu(B) trae Muzzarella B y NO trae Muzzarella A')
+      } else nok('MT. la carta de B se mezcló', JSON.stringify({ bTieneSuyo, bNoTieneOtro, nombresB }))
+
+      // ── Ni los items entre sí, ni las cartas completas ──
+      const interseccion = nombresA.filter((n) => nombresB.includes(n))
+      if (interseccion.length === 0) ok('MT. las dos cartas no comparten NINGÚN item')
+      else nok('MT. hay items en las dos cartas', interseccion.join(', '))
+
+      // ── Las CATEGORÍAS tampoco: se comparan por id, no por nombre ──
+      const { data: catsDeA } = await admin.from('menu_categories').select('id').eq('tenant_id', A.id)
+      const { data: catsDeB } = await admin.from('menu_categories').select('id').eq('tenant_id', B.id)
+      const idsA = new Set(((catsDeA ?? []) as { id: string }[]).map((c) => c.id))
+      const idsB = new Set(((catsDeB ?? []) as { id: string }[]).map((c) => c.id))
+
+      const catsDevueltasA = cartaA.map((c) => c.id)
+      const catsDevueltasB = cartaB.map((c) => c.id)
+
+      if (catsDevueltasA.every((id) => idsA.has(id)) && catsDevueltasA.every((id) => !idsB.has(id))) {
+        ok('MT. todas las categorías devueltas para A son de A, y ninguna es de B')
+      } else nok('MT. la carta de A devolvió categorías ajenas', JSON.stringify(catsDevueltasA))
+
+      if (catsDevueltasB.every((id) => idsB.has(id)) && catsDevueltasB.every((id) => !idsA.has(id))) {
+        ok('MT. todas las categorías devueltas para B son de B, y ninguna es de A')
+      } else nok('MT. la carta de B devolvió categorías ajenas', JSON.stringify(catsDevueltasB))
+
+      // ── Y los items, colgados de la categoría correcta ──
+      const { data: itemsDeA } = await admin.from('menu_items').select('id').eq('tenant_id', A.id)
+      const idsItemsA = new Set(((itemsDeA ?? []) as { id: string }[]).map((i) => i.id))
+      const itemsDevueltosA = cartaA.flatMap((c) => c.items.map((i) => i.id))
+      if (itemsDevueltosA.every((id) => idsItemsA.has(id))) {
+        ok(`MT. los ${itemsDevueltosA.length} items devueltos para A pertenecen todos a A`)
+      } else nok('MT. la carta de A devolvió items ajenos')
+
+      // ── §3. La moneda sale del tenant PEDIDO ─────────────────────────────────
+      // Se le pone a B una moneda distinta: si la función ignorara el id, las dos
+      // llamadas devolverían lo mismo y esto lo delata.
+      await admin.from('tenants').update({ currency: 'USD' } as never).eq('id', B.id)
+
+      const monedaA = await getPublicTenantCurrency(A.id)
+      const monedaB = await getPublicTenantCurrency(B.id)
+
+      if (monedaA === 'ARS' && monedaB === 'USD') {
+        ok(`MT. getPublicTenantCurrency devuelve la moneda de CADA tenant: A=${monedaA} · B=${monedaB}`)
+      } else nok('MT. las monedas se mezclaron o no son las esperadas',
+        JSON.stringify({ monedaA, monedaB }))
+
+      if (monedaA !== monedaB) ok('MT. y no son la misma, así que la consulta sí discrimina por id')
+      else nok('MT. las dos llamadas devolvieron la misma moneda')
+    }
+
     console.log(`\n${HR}\n  Default legacy de can_confirm_reservations`)
 
     const DEFAULTS_ESPERADOS: Record<string, boolean> = {
@@ -797,32 +1153,34 @@ async function main() {
 
     // ── AL. D. la migración no hizo backfill ────────────────────────────────
     //
-    // Se miran los OWNERS, no las recepcionistas, y la distinción importa:
+    // La propiedad que la migración promete es "sin backfill": cambió el DEFAULT
+    // y no tocó ninguna fila. Un backfill habría puesto can_confirm_reservations
+    // en false en TODAS, así que basta con que sobreviva al menos una en true
+    // creada antes de la migración para saber que no corrió.
     //
-    //   · Los owners preexistentes se crearon antes de 20260917000004 con
-    //     can_confirm_reservations = true (el default viejo) y NO son editables
-    //     desde el diálogo de permisos —updateReceptionistPermissionsAction
-    //     rechaza a quien no sea receptionist—. O sea que su valor solo pudo
-    //     haber cambiado por un backfill. Si siguen en true, no hubo ninguno.
-    //
-    //   · Una recepcionista, en cambio, es justamente lo que un owner PUEDE
-    //     apagar desde la UI. Fijar su valor acá sería pinear un estado del
-    //     fixture y no una propiedad de la migración: el test fallaría cuando
-    //     alguien usa la aplicación como corresponde.
+    // Deliberadamente NO se buscan emails concretos. Antes este caso listaba
+    // owner.demo y owner.gastro, y falló cuando el fixture recreó a owner.gastro:
+    // esa fila ya no era preexistente, había nacido DESPUÉS con el default nuevo
+    // — o sea, el comportamiento correcto haciendo fallar al test. Fijar filas
+    // concretas era pinear un estado del proyecto, no la propiedad.
     {
       const { data } = await admin.from('tenant_users')
-        .select('email, role, can_confirm_reservations')
-        .in('email', ['owner.demo@reservanex.test', 'owner.gastro@reservanex.test'])
-        .order('email')
-      const filas = (data ?? []) as { email: string; role: string; can_confirm_reservations: boolean }[]
-      const owners = filas.filter((f) => f.role === 'owner')
+        .select('email, role, can_confirm_reservations, created_at')
+        .eq('can_confirm_reservations', true)
+        .order('created_at', { ascending: true })
+      const enTrue = (data ?? []) as { email: string; role: string; created_at: string }[]
 
-      if (owners.length > 0 && owners.every((f) => f.can_confirm_reservations === true)) {
-        ok(`AL. (D) los ${owners.length} owners preexistentes conservan can_confirm_reservations = true: la migración no hizo backfill`)
-      } else if (owners.length === 0) {
-        // El fixture puede no estar preparado; no se inventa un ✓.
-        console.log('      AL. sin owners preexistentes en este proyecto — nada que comprobar')
-      } else nok('AL. un owner preexistente cambió de valor', JSON.stringify(owners))
+      // Solo las anteriores al run: las que crea este mismo script no dicen nada
+      // sobre un backfill pasado.
+      const previas = enTrue.filter((f) => !f.email.includes(RUN))
+
+      if (previas.length > 0) {
+        ok(`AL. (D) ${previas.length} fila(s) preexistente(s) conservan can_confirm_reservations = true: la migración no hizo backfill`)
+      } else {
+        // No se inventa un ✓: sin ninguna fila anterior, este proyecto no tiene
+        // con qué demostrarlo, y decirlo es más útil que un verde vacío.
+        console.log('      AL. sin filas anteriores al run en true — nada que comprobar en este proyecto')
+      }
     }
 
     // ── El caso que motivó todo: order_request ────────────────────────────────
@@ -967,6 +1325,20 @@ async function main() {
   } finally {
     console.log(`\n${HR}\n  limpieza`)
     const problemas: string[] = []
+
+    // Storage NO se limpia con las filas: hay que borrarlo explícitamente. Se
+    // listan las carpetas de los tenants del run en vez de acordarse de cada
+    // path, así también caen los archivos que subieron los casos que "no
+    // deberían haber podido" si alguno hubiera pasado.
+    for (const id of tenantIds) {
+      const { data: objetos } = await admin.storage.from('menu-images').list(id, { limit: 1000 })
+      const paths = (objetos ?? []).map((o) => `${id}/${o.name}`)
+      if (paths.length > 0) {
+        const { error } = await admin.storage.from('menu-images').remove(paths)
+        if (error) problemas.push(`storage/${id}: ${error.message}`)
+        else console.log(`  ✓ menu-images: ${paths.length} archivo(s)`)
+      }
+    }
     for (const id of tenantIds) {
       // Orden obligatorio: items antes que categorías. category_id es
       // ON DELETE RESTRICT, así que al revés falla.
@@ -997,10 +1369,17 @@ async function main() {
       console.error(`  ✗ la limpieza reportó errores:\n      ${problemas.join('\n      ')}`)
       failed++
     }
-    if ((catsRestantes ?? 0) === 0 && (itemsRestantes ?? 0) === 0 && (tenantsRestantes ?? 0) === 0) {
-      console.log('  ✓ sin residuos: 0 categorías, 0 productos, 0 tenants de este run')
+    let archivosRestantes = 0
+    for (const id of tenantIds) {
+      const { data: objetos } = await admin.storage.from('menu-images').list(id, { limit: 1000 })
+      archivosRestantes += (objetos ?? []).length
+    }
+
+    if ((catsRestantes ?? 0) === 0 && (itemsRestantes ?? 0) === 0 && (tenantsRestantes ?? 0) === 0
+        && archivosRestantes === 0) {
+      console.log('  ✓ sin residuos: 0 categorías, 0 productos, 0 tenants, 0 archivos de este run')
     } else {
-      console.error(`  ✗ residuos: cats=${catsRestantes} items=${itemsRestantes} tenants=${tenantsRestantes}`)
+      console.error(`  ✗ residuos: cats=${catsRestantes} items=${itemsRestantes} tenants=${tenantsRestantes} archivos=${archivosRestantes}`)
       failed++
     }
     // NOTA: si este script se ejecuta con la salida piteada a `head`, SIGPIPE lo
