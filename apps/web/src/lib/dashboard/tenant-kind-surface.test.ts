@@ -246,10 +246,13 @@ describe('11 y 17. copy de plataforma', () => {
 
 describe('26. no existe ningún vertical de autos', () => {
   it('ni enum, ni ruta, ni implementación, en todo lo versionado', () => {
+    // Sólo código productivo: un *.test.ts puede nombrar un vertical de autos
+    // como fixture NEGATIVA (lo que el schema tiene que rechazar) sin que eso
+    // signifique que exista.
     const versionados = execFileSync('git', ['ls-files'], { cwd: RAIZ, encoding: 'utf8' })
       .split('\n')
       .filter((f) => /\.(ts|tsx|sql)$/.test(f))
-      .filter((f) => !f.endsWith('tenant-kind-surface.test.ts'))
+      .filter((f) => !/\.test\.tsx?$/.test(f))
 
     const PATRON = /\b(car_dealership|dealership|automotive|vehicle_vertical|autos_vertical)\b/i
     const culpables: string[] = []
