@@ -577,6 +577,418 @@ async function main(): Promise<void> {
       }
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    // 11 y 12 — Cierre food_service: las entidades MATERIALIZADAS desde una
+    //           solicitud también se tienen que poder purgar
+    // ════════════════════════════════════════════════════════════════════════
+    //
+    // La auditoría transversal encontró que admin_purge_tenant() borraba 40
+    // tablas por nombre y dos faltaban: table_reservations y property_visits.
+    // Las dos apuntan con NO ACTION —y NOT DEFERRABLE— a operation_requests y a
+    // contacts, que el purge SÍ borra, así que el DELETE de operation_requests
+    // levantaba 23503 y abortaba todo. Un restaurante con una reserva de mesa
+    // confirmada, o una inmobiliaria con una visita agendada, no se podían
+    // eliminar de ninguna manera.
+    //
+    // Es el mismo bug que 20260920000003 arregló para orders. No se había visto
+    // porque aquella corrección sólo auditó las FK que C3C acababa de agregar, y
+    // porque este archivo no nombraba ninguna de las dos tablas.
+    //
+    // Los dos casos construyen la entidad por el flujo PRODUCTIVO completo
+    // (submission → operation_request → aceptar con la RPC y una sesión real) y
+    // purgan con purgeTenantWithStorage(), no con un DELETE directo: lo que hay
+    // que proteger es la integración entera, no una sentencia suelta.
+    const anonUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
+
+    /** Una fecha futura en ISO: decide_* rechaza agendar en el pasado. */
+    function futuroISO(dias: number): string {
+      return new Date(Date.now() + dias * 86_400_000).toISOString().slice(0, 10)
+    }
+
+    /** Owner real con sesión: decide_operation_request resuelve auth.uid(). */
+    async function ownerConSesion(tenantId: string, slug: string) {
+      const password = randomBytes(18).toString('hex')
+      const email = `owner-${slug}@example.test`
+      const { data: au, error } = await admin.auth.admin.createUser({
+        email, password, email_confirm: true,
+      })
+      if (error || !au.user) throw new Error(`auth: ${error?.message}`)
+      authUserIds.push(au.user.id)
+      await admin.from('tenant_users').insert({
+        id: au.user.id, tenant_id: tenantId, name: 'Owner purge', email,
+        role: 'owner', active: true,
+      } as never)
+
+      const sesion = createSupabaseJsClient(anonUrl, anonKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      })
+      const { error: eLogin } = await sesion.auth.signInWithPassword({ email, password })
+      if (eLogin) throw new Error(`login: ${eLogin.message}`)
+      return sesion
+    }
+
+    /**
+     * ¿Quedó alguna fila de auditoría que ya nadie pueda alcanzar?
+     *
+     * Dos formas de quedar huérfano: con el tenant_id del tenant borrado (el
+     * purge debería haberla llevado), o con tenant_id NULL apuntando a una
+     * entidad que ya no existe — que fue exactamente el bug de order_items que
+     * arregló 20260920000004, invisible para cualquier limpieza por tenant.
+     */
+    async function auditoriaHuerfana(tenantId: string, entityIds: string[]): Promise<string[]> {
+      const restos: string[] = []
+      const { count: porTenant } = await admin.from('audit_logs')
+        .select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId)
+      if ((porTenant ?? 0) > 0) restos.push(`audit_logs(tenant)=${porTenant}`)
+
+      if (entityIds.length > 0) {
+        const { count: porEntidad } = await admin.from('audit_logs')
+          .select('id', { count: 'exact', head: true }).in('entity_id', entityIds)
+        if ((porEntidad ?? 0) > 0) restos.push(`audit_logs(entidad)=${porEntidad}`)
+      }
+      return restos
+    }
+
+    /**
+     * Limpieza que corre SIEMPRE, pase o falle el caso.
+     *
+     * No alcanza con limpiar en el catch: purgeTenantWithStorage() devuelve el
+     * error en dbError en vez de lanzarlo, así que un purge fallido no entra al
+     * catch y el tenant quedaba vivo con sus datos. Medido: probando estos dos
+     * casos contra la función rota a propósito, sobrevivieron tres tenants
+     * [TEST] con una reserva de mesa y una visita adentro.
+     *
+     * Se borra a mano lo que la función pudo no haber borrado y recién después
+     * se la llama, para que el tenant se vaya incluso si el bug volviera.
+     */
+    // El cliente de Supabase está tipado: from() con un string suelto colapsa a
+    // never. Las tablas van como literales, que además deja que el compilador
+    // avise si alguna deja de existir.
+    type TablaLimpiable =
+      | 'table_reservations'
+      | 'property_visits'
+      | 'reservations'
+      | 'operation_requests'
+      | 'form_submissions'
+
+    async function limpiarSiSobrevive(
+      tenantId: string,
+      tablas: readonly TablaLimpiable[],
+    ): Promise<void> {
+      const { data } = await admin.from('tenants').select('id').eq('id', tenantId).maybeSingle()
+      if (!data) return
+      for (const tb of tablas) {
+        await admin.from(tb).delete().eq('tenant_id', tenantId)
+      }
+      try { await admin.rpc('admin_purge_tenant', { p_tenant_id: tenantId }) } catch { /* noop */ }
+      await admin.from('tenants').delete().eq('id', tenantId)
+    }
+
+    // ── 11. Reserva de mesa real (food_service) ──────────────────────────────
+    {
+      const slug = `test-purge-mesa-${Date.now()}`
+      const { data: t, error: eT } = await admin.from('tenants').insert({
+        name: `[TEST] purge-mesa ${slug}`, slug, status: 'active',
+        vertical: 'food_service', currency: 'ARS',
+      } as never).select('id').single()
+      if (eT || !t) throw new Error(`11. tenant: ${eT?.message}`)
+      const oid = t.id
+
+      try {
+        const sesion = await ownerConSesion(oid, slug)
+
+        const { data: contact } = await admin.from('contacts')
+          .insert({ tenant_id: oid, phone: nextPhone(3_980_000_000), name: 'Cliente mesa' } as never)
+          .select('id').single()
+
+        const { data: sub } = await admin.from('form_submissions').insert({
+          tenant_id: oid, reference: generateSubmissionReference(),
+          intent: 'table_reservation', status: 'submitted', source: 'public_site',
+          payload: { name: 'Ana', people: 4, date: futuroISO(7), time: '21:00' } as never,
+          idempotency_key: randomUUID(), contact_id: contact!.id,
+          expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+        } as never).select('id').single()
+
+        const { data: conf } = await admin.rpc('confirm_submission_and_create_operation', {
+          p_submission_id: sub!.id, p_tenant_id: oid, p_contact_id: contact!.id,
+          p_conversation_id: undefined,
+        })
+        const opId = (conf as { operation_id?: string } | null)?.operation_id
+        if (!opId) throw new Error('11. no se creó el table_request')
+
+        const { data: dec } = await sesion.rpc('decide_operation_request', {
+          p_operation_id: opId, p_action: 'confirmed',
+          p_scheduled_date: futuroISO(7), p_scheduled_time: '21:00', p_party_size: 4,
+        })
+        const mesaId = (dec as { table_reservation_id?: string } | null)?.table_reservation_id
+        if (!mesaId) throw new Error(`11. no se materializó la reserva: ${JSON.stringify(dec)}`)
+
+        if (await countRowsForTenant('table_reservations', 'tenant_id', oid) === 1) {
+          ok('11. Pre-purge: el tenant food_service tiene 1 reserva de mesa real')
+        } else {
+          nok('11. Pre-purge fixture de la reserva de mesa')
+        }
+
+        // ── EL PURGE PRODUCTIVO ─────────────────────────────────────────────
+        const res = await purgeTenantWithStorage(oid)
+
+        if (!res.dbError) {
+          ok('11. purgeTenantWithStorage() borra un tenant CON reserva de mesa, sin 23503')
+        } else {
+          nok('11. el purge falló con una reserva de mesa presente', res.dbError)
+        }
+
+        const r = (res.dbResult ?? {}) as Record<string, number>
+        if (r.table_reservations === 1) {
+          ok('11. y el resultado CUENTA lo borrado: table_reservations=1')
+        } else {
+          nok('11. el resultado no cuenta table_reservations', JSON.stringify(r))
+        }
+
+        const restantes: string[] = []
+        for (const tabla of ['table_reservations', 'operation_requests', 'form_submissions',
+                             'contacts', 'tenant_users'] as const) {
+          const n = await countRowsForTenant(tabla, 'tenant_id', oid)
+          if (n > 0) restantes.push(`${tabla}=${n}`)
+        }
+        const { data: tenantRow } = await admin.from('tenants').select('id').eq('id', oid).maybeSingle()
+        if (tenantRow) restantes.push('tenants=1')
+        restantes.push(...await auditoriaHuerfana(oid, [mesaId, opId, sub!.id]))
+
+        if (restantes.length === 0) {
+          ok('11 y 13. 0 residuos y 0 auditoría huérfana: ni reserva, ni solicitud, ni contacto, ni tenant')
+        } else {
+          nok('11. quedaron residuos tras el purge', restantes.join(' '))
+        }
+      } catch (err) {
+        nok('11. purge de un tenant con reserva de mesa', err instanceof Error ? err.message : String(err))
+      } finally {
+        await limpiarSiSobrevive(oid, ['table_reservations', 'operation_requests', 'form_submissions'])
+      }
+    }
+
+    // ── 12. Visita inmobiliaria real (real_estate) ───────────────────────────
+    //
+    // El MISMO bug, del otro lado del producto: property_visits tampoco se
+    // borraba. Se prueba acá y no en validate-visits.ts porque lo que está en
+    // juego es el purge, no el ciclo de vida de la visita.
+    {
+      const slug = `test-purge-visita-${Date.now()}`
+      const { data: t, error: eT } = await admin.from('tenants').insert({
+        name: `[TEST] purge-visita ${slug}`, slug, status: 'active',
+        vertical: 'real_estate', currency: 'ARS',
+      } as never).select('id').single()
+      if (eT || !t) throw new Error(`12. tenant: ${eT?.message}`)
+      const oid = t.id
+
+      try {
+        const sesion = await ownerConSesion(oid, slug)
+
+        const { data: contact } = await admin.from('contacts')
+          .insert({ tenant_id: oid, phone: nextPhone(3_990_000_000), name: 'Cliente visita' } as never)
+          .select('id').single()
+        const { data: prop, error: eProp } = await admin.from('properties').insert({
+          tenant_id: oid, title: `[TEST] Depto purge ${slug}`, city: 'CABA',
+          published: true, operation_type: 'sale', pricing_mode: 'consult', currency: 'ARS',
+        } as never).select('id').single()
+        if (eProp || !prop) throw new Error(`12. property: ${eProp?.message}`)
+
+        const { data: sub } = await admin.from('form_submissions').insert({
+          tenant_id: oid, reference: generateSubmissionReference(),
+          intent: 'property_visit', status: 'submitted', source: 'public_site',
+          payload: { name: 'Beto', preferred_date: futuroISO(9) } as never,
+          idempotency_key: randomUUID(), contact_id: contact!.id,
+          entity_type: 'property', entity_id: prop!.id,
+          expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+        } as never).select('id').single()
+
+        const { data: conf } = await admin.rpc('confirm_submission_and_create_operation', {
+          p_submission_id: sub!.id, p_tenant_id: oid, p_contact_id: contact!.id,
+          p_conversation_id: undefined,
+        })
+        const opId = (conf as { operation_id?: string } | null)?.operation_id
+        if (!opId) throw new Error('12. no se creó el visit_request')
+
+        const { data: dec } = await sesion.rpc('decide_operation_request', {
+          p_operation_id: opId, p_action: 'confirmed',
+          p_scheduled_date: futuroISO(9), p_scheduled_time: '15:00',
+        })
+        const visitaId = (dec as { visit_id?: string } | null)?.visit_id
+        if (!visitaId) throw new Error(`12. no se agendó la visita: ${JSON.stringify(dec)}`)
+
+        if (await countRowsForTenant('property_visits', 'tenant_id', oid) === 1) {
+          ok('12. Pre-purge: el tenant real_estate tiene 1 visita agendada real')
+        } else {
+          nok('12. Pre-purge fixture de la visita')
+        }
+
+        // ── EL PURGE PRODUCTIVO ─────────────────────────────────────────────
+        const res = await purgeTenantWithStorage(oid)
+
+        if (!res.dbError) {
+          ok('12. purgeTenantWithStorage() borra un tenant CON visita agendada, sin 23503')
+        } else {
+          nok('12. el purge falló con una visita presente', res.dbError)
+        }
+
+        const r = (res.dbResult ?? {}) as Record<string, number>
+        if (r.property_visits === 1) {
+          ok('12. y el resultado CUENTA lo borrado: property_visits=1')
+        } else {
+          nok('12. el resultado no cuenta property_visits', JSON.stringify(r))
+        }
+
+        const restantes: string[] = []
+        for (const tabla of ['property_visits', 'operation_requests', 'form_submissions',
+                             'contacts', 'properties', 'tenant_users'] as const) {
+          const n = await countRowsForTenant(tabla, 'tenant_id', oid)
+          if (n > 0) restantes.push(`${tabla}=${n}`)
+        }
+        const { data: tenantRow } = await admin.from('tenants').select('id').eq('id', oid).maybeSingle()
+        if (tenantRow) restantes.push('tenants=1')
+        restantes.push(...await auditoriaHuerfana(oid, [visitaId, opId, sub!.id, prop!.id]))
+
+        if (restantes.length === 0) {
+          ok('12 y 13. 0 residuos y 0 auditoría huérfana: ni visita, ni solicitud, ni propiedad, ni tenant')
+        } else {
+          nok('12. quedaron residuos tras el purge', restantes.join(' '))
+        }
+      } catch (err) {
+        nok('12. purge de un tenant con visita agendada', err instanceof Error ? err.message : String(err))
+      } finally {
+        await limpiarSiSobrevive(oid, ['property_visits', 'operation_requests', 'form_submissions'])
+      }
+    }
+
+    // ── 15. Reserva temporaria real (real_estate) ────────────────────────────
+    //
+    // La CUARTA entidad que nace de una solicitud aceptada, y la que faltaba.
+    //
+    // reservations.source_operation_request_id → operation_requests es RESTRICT,
+    // y hasta 20260920000006 el purge borraba reservations MUCHO después de
+    // operation_requests. Se descubrió reseteando los datos demo con el
+    // mecanismo productivo: el único tenant de la base no se pudo borrar.
+    //
+    // Este archivo no lo había detectado nunca por un motivo concreto: el
+    // fixture principal inserta reservations DIRECTAMENTE, sin
+    // source_operation_request_id, así que la FK no se dispara jamás. Tener una
+    // reserva en el fixture no alcanzaba — tiene que venir de una solicitud.
+    //
+    // Por eso este caso la materializa por el flujo real: temporary_rental →
+    // reservation_request → aceptar con la RPC → reservación con su origen.
+    {
+      const slug = `test-purge-reserva-${Date.now()}`
+      const { data: t, error: eT } = await admin.from('tenants').insert({
+        name: `[TEST] purge-reserva ${slug}`, slug, status: 'active',
+        vertical: 'real_estate', currency: 'ARS',
+      } as never).select('id').single()
+      if (eT || !t) throw new Error(`15. tenant: ${eT?.message}`)
+      const oid = t.id
+
+      try {
+        const sesion = await ownerConSesion(oid, slug)
+
+        const { data: contact } = await admin.from('contacts')
+          .insert({ tenant_id: oid, phone: nextPhone(3_960_000_000), name: 'Cliente reserva' } as never)
+          .select('id').single()
+        const { data: prop, error: eProp } = await admin.from('properties').insert({
+          tenant_id: oid, title: `[TEST] Depto reserva ${slug}`, city: 'Buenos Aires',
+          published: true, operation_type: 'temporary_rental', pricing_mode: 'consult', currency: 'ARS',
+        } as never).select('id').single()
+        if (eProp || !prop) throw new Error(`15. property: ${eProp?.message}`)
+
+        const { data: sub } = await admin.from('form_submissions').insert({
+          tenant_id: oid, reference: generateSubmissionReference(),
+          intent: 'temporary_rental', status: 'submitted', source: 'public_site',
+          payload: {
+            name: 'Ana Gómez', check_in: '2027-03-10', check_out: '2027-03-15',
+            adults: 2, children: 1, has_pets: false,
+          } as never,
+          idempotency_key: randomUUID(), contact_id: contact!.id,
+          entity_type: 'property', entity_id: prop.id,
+          expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+        } as never).select('id').single()
+
+        const { data: conf } = await admin.rpc('confirm_submission_and_create_operation', {
+          p_submission_id: sub!.id, p_tenant_id: oid, p_contact_id: contact!.id,
+          p_conversation_id: undefined,
+        })
+        const opId = (conf as { operation_id?: string } | null)?.operation_id
+        if (!opId) throw new Error('15. no se creó el reservation_request')
+
+        const { data: dec } = await sesion.rpc('decide_operation_request', {
+          p_operation_id: opId, p_action: 'confirmed',
+        })
+        const resId = (dec as { reservation_id?: string } | null)?.reservation_id
+        if (!resId) throw new Error(`15. no se materializó la reserva: ${JSON.stringify(dec)}`)
+
+        // Lo que importa no es que exista la reserva, sino que apunte a la
+        // solicitud: sin eso la FK RESTRICT no se ejerce y el caso no prueba nada.
+        const { data: reserva } = await admin.from('reservations')
+          .select('source_operation_request_id').eq('id', resId).single()
+
+        if (reserva?.source_operation_request_id === opId) {
+          ok('15. Pre-purge: hay 1 reserva materializada, ligada a su solicitud (la FK RESTRICT que rompía)')
+        } else {
+          nok('15. la reserva no quedó ligada a la solicitud', JSON.stringify(reserva))
+        }
+
+        // ── EL PURGE PRODUCTIVO ─────────────────────────────────────────────
+        const res = await purgeTenantWithStorage(oid)
+
+        if (!res.dbError) {
+          ok('15. purgeTenantWithStorage() borra un tenant CON reserva materializada, sin 23503')
+        } else {
+          nok('15. el purge falló con una reserva materializada', res.dbError)
+        }
+
+        const r = (res.dbResult ?? {}) as Record<string, number>
+        if (r.reservations === 1 && r.operation_requests === 1) {
+          ok('15. y el resultado CUENTA lo borrado: reservations=1, operation_requests=1')
+        } else {
+          nok('15. el resultado no cuenta reserva y solicitud', JSON.stringify(r))
+        }
+
+        const restantes: string[] = []
+        for (const tabla of ['reservations', 'operation_requests', 'form_submissions',
+                             'contacts', 'properties', 'tenant_users'] as const) {
+          const n = await countRowsForTenant(tabla, 'tenant_id', oid)
+          if (n > 0) restantes.push(`${tabla}=${n}`)
+        }
+        const { data: tenantRow } = await admin.from('tenants').select('id').eq('id', oid).maybeSingle()
+        if (tenantRow) restantes.push('tenants=1')
+        restantes.push(...await auditoriaHuerfana(oid, [resId, opId, sub!.id, prop.id]))
+
+        if (restantes.length === 0) {
+          ok('15 y 13. 0 residuos y 0 auditoría huérfana: ni reserva, ni solicitud, ni propiedad, ni tenant')
+        } else {
+          nok('15. quedaron residuos tras el purge', restantes.join(' '))
+        }
+      } catch (err) {
+        nok('15. purge de un tenant con reserva materializada', err instanceof Error ? err.message : String(err))
+      } finally {
+        await limpiarSiSobrevive(oid, ['reservations', 'operation_requests', 'form_submissions'])
+      }
+    }
+
+    // ── 14. admin_purge_tenant tiene UNA sola firma ──────────────────────────
+    //
+    // CREATE OR REPLACE con una firma distinta no reemplaza: crea un OVERLOAD, y
+    // entonces conviven la versión vieja y la nueva. Si eso pasara, PostgREST no
+    // podría elegir y devolvería PGRST203 en vez de ejecutar. Llamarla con un
+    // uuid inexistente prueba las dos cosas a la vez: que resuelve sin
+    // ambigüedad y que la que resuelve es la que tiene el guard de "not found".
+    {
+      const { error } = await admin.rpc('admin_purge_tenant', { p_tenant_id: randomUUID() })
+      const msg = error?.message ?? ''
+      if (error && /not found/i.test(msg) && !/PGRST203|not unique|best candidate/i.test(msg)) {
+        ok('14. admin_purge_tenant resuelve a una sola función: sin overload')
+      } else {
+        nok('14. admin_purge_tenant podría tener un overload', msg || 'no devolvió el error esperado')
+      }
+    }
+
     // ── 9. A second cleanup on the same (already-deleted) tenant is safe ─────
     const second = await purgeTenantWithStorage(targetId)
     if (second.dbError && /not found/i.test(second.dbError) && !second.storage.attempted) {
