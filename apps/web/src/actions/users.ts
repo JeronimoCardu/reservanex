@@ -18,6 +18,7 @@ import {
 } from '@/lib/repositories/users.repository'
 import type { ReceptionistPermissions } from '@/lib/repositories/users.repository'
 import type { ActionResult } from '@/lib/action-result'
+import { tenantLimitMessage } from '@/lib/tenant-limits'
 
 const REVALIDATE = '/dashboard/users'
 
@@ -55,7 +56,7 @@ export async function createTenantUserAction(
   // Check per-role limits
   if (parsed.data.role === 'owner') {
     const ownerCount = await repo.countActiveOwners(tenantId)
-    if (ownerCount >= limits.maxOwners) {
+    if (repo.limitReached(ownerCount, limits.maxOwners)) {
       return {
         success: false,
         error: 'Este tenant ya tiene el máximo de administradores permitidos por el plan.',
@@ -65,7 +66,7 @@ export async function createTenantUserAction(
 
   if (parsed.data.role === 'receptionist') {
     const receptionistCount = await repo.countActiveReceptionists(tenantId)
-    if (receptionistCount >= limits.maxReceptionists) {
+    if (repo.limitReached(receptionistCount, limits.maxReceptionists)) {
       return {
         success: false,
         error: `Tu plan permite hasta ${limits.maxReceptionists} agentes. Para sumar más usuarios, necesitás cambiar de plan.`,
@@ -75,7 +76,7 @@ export async function createTenantUserAction(
 
   // Check total user limit
   const totalCount = await repo.countActiveTenantUsers(tenantId)
-  if (totalCount >= limits.maxTotalUsers) {
+  if (repo.limitReached(totalCount, limits.maxTotalUsers)) {
     return {
       success: false,
       error: 'Tu plan llegó al límite de usuarios disponibles. Para sumar más, necesitás cambiar de plan.',
@@ -98,6 +99,8 @@ export async function createTenantUserAction(
     return { success: true, data: { id: user.id } }
   } catch (err) {
     const msg = err instanceof Error ? err.message : ''
+    const limite = tenantLimitMessage(err)
+    if (limite) return { success: false, error: limite }
     const mapped = mapInviteError(msg)
     if (mapped) return { success: false, error: mapped }
     // Unknown error: logged in repository; show generic message in UI
@@ -125,7 +128,7 @@ export async function updateTenantUserAction(
       repo.countActiveOwners(tenantId, id),
       repo.getTenantLimits(tenantId),
     ])
-    if (ownerCount >= limits.maxOwners) {
+    if (repo.limitReached(ownerCount, limits.maxOwners)) {
       return {
         success: false,
         error: 'Este tenant ya tiene el máximo de administradores permitidos por el plan.',
@@ -138,7 +141,7 @@ export async function updateTenantUserAction(
       repo.countActiveReceptionists(tenantId, id),
       repo.getTenantLimits(tenantId),
     ])
-    if (receptionistCount >= limits.maxReceptionists) {
+    if (repo.limitReached(receptionistCount, limits.maxReceptionists)) {
       return {
         success: false,
         error: `Tu plan permite hasta ${limits.maxReceptionists} agentes. Para sumar más usuarios, necesitás cambiar de plan.`,

@@ -32,7 +32,8 @@
     "validate:menu-catalog": "tsx scripts/validate-menu-catalog.ts",
     "validate:food-orders": "tsx scripts/validate-food-orders.ts",
     "validate:orders": "tsx scripts/validate-orders.ts",
-    "fixture:menu-demo": "tsx scripts/prepare-menu-demo-fixture.ts"
+    "fixture:menu-demo": "tsx scripts/prepare-menu-demo-fixture.ts",
+    "validate:tenant-kinds": "tsx scripts/validate-tenant-kinds.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -1,10 +1,11 @@
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { randomUUID } from 'node:crypto'
 import {
   formIntentSchema,
   tenantVerticalSchema,
   isIntentAllowedForVertical,
   getFormDefinition,
+  foodCapabilitiesFrom,
 } from '@orderflow/validators'
 import {
   getPublicTenant,
@@ -63,6 +64,41 @@ export default async function FormPage({ params, searchParams }: PageProps) {
   const verticalParsed = tenantVerticalSchema.safeParse(tenant.vertical)
   const vertical = verticalParsed.success ? verticalParsed.data : 'real_estate'
   if (!isIntentAllowedForVertical(parsedIntent.data, vertical)) notFound()
+
+  // Un pedido NO se arma en este formulario genérico (cierre food_service).
+  //
+  // food_order es el único intent cuyo payload no lo escribe el visitante campo
+  // por campo: las líneas salen del carrito, con los precios que congeló el
+  // servidor. DynamicForm no tiene forma de producir `items`, así que esta
+  // página renderizaba un formulario que fallaba con 422 SIEMPRE, y el error
+  // caía bajo la clave `items` —que no es un campo dibujado— dejando al
+  // visitante con "Revisá los campos marcados" y nada marcado.
+  //
+  // No es 404: la URL existe y el tenant también. Lo que no existe es este
+  // camino hacia un pedido. El único flujo soportado es carta → carrito →
+  // checkout, así que un favorito viejo termina en la carta y puede seguir.
+  //
+  // Redirect temporal, no permanente: un 308 se le queda cacheado al navegador
+  // para siempre y volverlo atrás —si algún día food_order tiene página propia—
+  // sería imposible sin cambiar la URL.
+  //
+  // Va DESPUÉS del guard de vertical a propósito: /formulario/food_order en una
+  // inmobiliaria sigue siendo 404, no un redirect a una carta que no tiene.
+  if (parsedIntent.data === 'food_order') redirect(`/site/${tenantSlug}`)
+
+  // Las capacidades del local también cierran rutas, no sólo esconden botones.
+  //
+  // table_reservation es 404 —no un redirect— cuando el local no toma
+  // reservas: a diferencia de food_order, acá no hay a dónde mandar a la
+  // persona que sirva para lo mismo. Es el patrón de fallar cerrado que ya usa
+  // el guard de vertical dos líneas más arriba.
+  //
+  // Apagar la capacidad NO borra reservas históricas ni altera su ciclo de
+  // vida: sólo impide que entren nuevas.
+  const caps = foodCapabilitiesFrom(tenant)
+  if (parsedIntent.data === 'table_reservation' && !caps.tableReservations) notFound()
+
+  // general_inquiry no tiene capacidad propia y queda siempre disponible.
 
   // Una clave de idempotencia por carga de página. Dos taps en "Enviar"
   // comparten clave (→ una sola submission); recargar la página da una nueva

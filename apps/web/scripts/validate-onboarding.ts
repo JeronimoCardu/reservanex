@@ -51,6 +51,7 @@ import { deriveAutoResponderStatus } from '../src/lib/autoresponder-platform'
 import { deriveDeviceStatus } from '../src/lib/autoresponder-device-health'
 import { deriveTenantSetupChecklist } from '../src/lib/tenant-setup-status'
 import type { TenantSetupChecklist } from '../src/lib/tenant-setup-status'
+import { planLimitsForTenantKind, tenantKindFrom } from '@orderflow/validators'
 
 const HR   = '─'.repeat(78)
 const PASS = '  ✓'
@@ -146,9 +147,12 @@ async function main(): Promise<void> {
     )
     const deviceStatus = deriveDeviceStatus({ configStatus: whatsappStatus, lastDeviceSeenAt: signals.lastDeviceSeenAt })
     return deriveTenantSetupChecklist({
+      kind: tenantKindFrom(tenant.vertical, tenant.client_type),
       tenantActive: tenant.status === 'trial' || tenant.status === 'active',
       ownerActive: signals.ownerActive, aiConfigured: signals.aiConfigured,
-      whatsappStatus, deviceStatus, publishedPropertyCount: signals.publishedPropertyCount,
+      whatsappStatus, deviceStatus, lastDeviceSeenAt: signals.lastDeviceSeenAt,
+      publishedPropertyCount: signals.publishedPropertyCount,
+      publishedMenuItemCount: signals.publishedMenuItemCount,
     })
   }
 
@@ -168,6 +172,10 @@ async function main(): Promise<void> {
       activate_immediately: true, onboarding_notes: null,
       primary_owner_name: 'Owner A', primary_owner_email: `owner-a-${RUN_ID}@example.test`,
       primary_owner_phone: null, assigned_seller_id: null, created_by_seller_id: null,
+      vertical:             'real_estate',
+      client_type:          'agency',
+      limits:               planLimitsForTenantKind('agency'),
+      capabilities:         null,
     })
     tenantIds.push(tenantA.id)
     const emailA = `owner-a-${RUN_ID}@example.test`
@@ -185,6 +193,10 @@ async function main(): Promise<void> {
       activate_immediately: true, onboarding_notes: null,
       primary_owner_name: 'Owner B', primary_owner_email: `owner-b-${RUN_ID}@example.test`,
       primary_owner_phone: null, assigned_seller_id: null, created_by_seller_id: null,
+      vertical:             'real_estate',
+      client_type:          'agency',
+      limits:               planLimitsForTenantKind('agency'),
+      capabilities:         null,
     })
     tenantIds.push(tenantB.id)
     const emailB = `owner-b-${RUN_ID}@example.test`
@@ -199,6 +211,10 @@ async function main(): Promise<void> {
       activate_immediately: true, onboarding_notes: null,
       primary_owner_name: null, primary_owner_email: null, primary_owner_phone: null,
       assigned_seller_id: null, created_by_seller_id: null,
+      vertical:             'real_estate',
+      client_type:          'agency',
+      limits:               planLimitsForTenantKind('agency'),
+      capabilities:         null,
     })
     tenantIds.push(tenantC.id)
 
@@ -211,6 +227,10 @@ async function main(): Promise<void> {
       activate_immediately: true, onboarding_notes: null,
       primary_owner_name: null, primary_owner_email: null, primary_owner_phone: null,
       assigned_seller_id: null, created_by_seller_id: null,
+      vertical:             'real_estate',
+      client_type:          'agency',
+      limits:               planLimitsForTenantKind('agency'),
+      capabilities:         null,
     })
     tenantIds.push(tenantD.id)
     const propD = await createProperty(tenantD.id, 'depto-test', 'Depto Test D') // same slug as A, different tenant
@@ -237,6 +257,10 @@ async function main(): Promise<void> {
         activate_immediately: false, onboarding_notes: null,
         primary_owner_name: null, primary_owner_email: null, primary_owner_phone: null,
         assigned_seller_id: null, created_by_seller_id: null,
+      vertical:             'real_estate',
+      client_type:          'agency',
+      limits:               planLimitsForTenantKind('agency'),
+      capabilities:         null,
       })
       nok('3. Duplicate slug rejected', 'createTenant did not throw for a colliding slug')
     } catch {
@@ -342,8 +366,8 @@ async function main(): Promise<void> {
     if (!checklistB.android.ok) ok('17. AutoResponder configured but device never seen → android checklist item is not ok')
     else nok('17. Android never-seen detection', JSON.stringify(checklistB.android))
 
-    if (!checklistB.properties.ok) ok('18. No published properties → properties checklist item is not ok')
-    else nok('18. No-properties detection', JSON.stringify(checklistB.properties))
+    if (!checklistB.catalog.ok) ok('18. No published properties → catalog checklist item is not ok')
+    else nok('18. No-properties detection', JSON.stringify(checklistB.catalog))
 
     if (checklistA.state === 'ready') ok('19. All requirements met → overall state is "ready"')
     else nok('19. Ready state', JSON.stringify(checklistA))

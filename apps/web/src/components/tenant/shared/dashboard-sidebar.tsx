@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@orderflow/supabase/browser'
 import type { TenantRole } from '@orderflow/types'
-import type { TenantVertical } from '@orderflow/validators'
+import type { TenantVertical, FoodCapabilities } from '@orderflow/validators'
 import { COMING_SOON, visibleNavItems } from '@/lib/dashboard/nav-items'
 import { cn } from '@/lib/utils'
 
@@ -16,10 +16,11 @@ interface DashboardSidebarProps {
   canAccessSettings: boolean
   // Fase 3E-C3A1 — el rubro decide qué módulos existen para este tenant.
   vertical:          TenantVertical
+  capabilities?:     FoodCapabilities | null
   isSetupOperator?:  boolean
 }
 
-export function DashboardSidebar({ role, canAccessSettings, vertical, isSetupOperator = false }: DashboardSidebarProps) {
+export function DashboardSidebar({ role, canAccessSettings, vertical, capabilities, isSetupOperator = false }: DashboardSidebarProps) {
   const pathname   = usePathname()
   const router     = useRouter()
   const [loggingOut, setLoggingOut] = useState(false)
@@ -27,7 +28,7 @@ export function DashboardSidebar({ role, canAccessSettings, vertical, isSetupOpe
   // Misma función que usa el mobile nav, y que lee el mismo mapa de rubros que
   // el guard de ruta server-side. Sin esto, escritorio y celular podían mostrar
   // listas distintas.
-  const navItems = visibleNavItems({ role, vertical, isSetupOperator })
+  const navItems = visibleNavItems({ role, vertical, capabilities, isSetupOperator })
   const showSettings = isSetupOperator || role === 'owner' || canAccessSettings
 
   async function handleLogout() {

@@ -14,7 +14,7 @@ export default async function PlatformShellLayout({ children }: { children: Reac
   const navItems = sa
     ? [
         { href: '/platform',                  label: 'Resumen'       },
-        { href: '/platform/tenants',          label: 'Inmobiliarias' },
+        { href: '/platform/tenants',          label: 'Clientes'      },
         { href: '/platform/sellers',          label: 'Sellers'       },
         { href: '/platform/pending',          label: 'Pendientes'    },
         { href: '/platform/admin/cleanup',    label: 'Cleanup'       },
@@ -24,8 +24,8 @@ export default async function PlatformShellLayout({ children }: { children: Reac
         { href: '/platform/setup', label: 'Mis setups' },
       ]
     : [
-        { href: '/platform',             label: 'Mis inmobiliarias'  },
-        { href: '/platform/tenants/new', label: 'Nueva inmobiliaria' },
+        { href: '/platform',             label: 'Mis clientes'       },
+        { href: '/platform/tenants/new', label: 'Nuevo cliente'      },
         { href: '/platform/metrics',     label: 'Métricas'           },
       ]
 

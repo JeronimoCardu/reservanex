@@ -353,3 +353,70 @@ export async function updateBotSettingsAction(input: unknown): Promise<ActionRes
   revalidatePath('/dashboard/settings/bot')
   return { success: true }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SERVICIOS DEL LOCAL (food_service)
+//
+// Delivery, retiro y reservas de mesa. Gobiernan las operaciones NUEVAS: un
+// pedido ya aceptado conserva su fulfillment y sigue su ciclo de vida aunque
+// después se apague esa modalidad. Las capacidades no reescriben evidencia.
+//
+// Owner solamente, igual que Pagos, Bot, Reservas IA y Sitio público: son
+// decisiones comerciales del negocio, no operación diaria. can_access_settings
+// —que sí habilita a una recepcionista en la pestaña Negocio— no alcanza acá,
+// y no se inventa un permiso nuevo para esto.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getFoodCapabilitiesAction(): Promise<
+  ActionResult<{ delivery: boolean; takeaway: boolean; tableReservations: boolean }>
+> {
+  const ctx = await requireTenantContext()
+  if (ctx.vertical !== 'food_service') {
+    return { success: false, error: 'Esta configuración es solo para negocios gastronómicos.' }
+  }
+  return { success: true, data: ctx.capabilities }
+}
+
+const foodCapabilitiesInputSchema = z.object({
+  delivery:          z.boolean(),
+  takeaway:          z.boolean(),
+  tableReservations: z.boolean(),
+})
+
+export async function updateFoodCapabilitiesAction(input: unknown): Promise<ActionResult> {
+  const { tenantId, vertical } = await requireOwner()
+
+  // El rubro se verifica server-side: un tenant inmobiliario no tiene estos
+  // interruptores y no puede escribirlos aunque alguien arme el POST a mano.
+  if (vertical !== 'food_service') {
+    return { success: false, error: 'Esta configuración es solo para negocios gastronómicos.' }
+  }
+
+  const parsed = foodCapabilitiesInputSchema.safeParse(input)
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.errors[0]?.message ?? 'Datos inválidos.' }
+  }
+
+  const d = parsed.data
+  const supabase = await createClient()
+
+  const { error } = await supabase
+    .from('tenants')
+    .update({
+      delivery_enabled:           d.delivery,
+      takeaway_enabled:           d.takeaway,
+      table_reservations_enabled: d.tableReservations,
+      updated_at:                 new Date().toISOString(),
+    })
+    .eq('id', tenantId)
+
+  if (error) return { success: false, error: error.message }
+
+  // Lo que cambia con esto: el nav del dashboard, el guard del módulo de
+  // reservas, el carrito y los CTA del sitio público. Todo eso se revalida.
+  revalidatePath('/dashboard/settings/services')
+  revalidatePath('/dashboard', 'layout')
+  revalidatePath('/site', 'layout')
+
+  return { success: true }
+}

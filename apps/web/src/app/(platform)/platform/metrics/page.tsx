@@ -25,7 +25,7 @@ export default async function MetricsPage() {
   const LABELS: Record<string, string> = {
     pending_review:   'Pendiente revisión',
     approved:         'Aprobadas',
-    meta_setup:       'Config. Meta',
+    meta_setup:       'Configuración técnica',
     testing:          'En pruebas',
     ready_to_deliver: 'Listas para entregar',
     delivered:        'Entregadas',
@@ -36,7 +36,7 @@ export default async function MetricsPage() {
     <div className="space-y-5">
       <div>
         <h1 className="text-xl font-semibold">Mis métricas</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">{tenants.length} inmobiliarias en tu cartera</p>
+        <p className="text-sm text-muted-foreground mt-0.5">{tenants.length} clientes en tu cartera</p>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

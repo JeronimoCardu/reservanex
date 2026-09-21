@@ -8,6 +8,7 @@ import * as repo from '@/lib/repositories/properties.repository'
 import { createClient } from '@orderflow/supabase/server'
 import type { ActionResult } from '@/lib/action-result'
 import type { PropertyVideoRow } from '@orderflow/types'
+import { tenantLimitMessage } from '@/lib/tenant-limits'
 
 const LIST_PATH   = '/dashboard/properties'
 const DETAIL_PATH = (id: string) => `/dashboard/properties/${id}`
@@ -91,6 +92,17 @@ export async function createPropertyAction(
   try {
     property = await repo.createProperty(ctx.tenantId, parsed.data)
   } catch (err) {
+    // El tope de propiedades lo aplica un trigger que bloquea la fila del
+    // tenant y cuenta dentro de la misma transacción del INSERT. Acá no se
+    // vuelve a contar a propósito: un SELECT count() previo seguido de un
+    // INSERT es exactamente lo que dos requests simultáneas rompen, y tener
+    // dos fuentes de verdad sólo agrega una que puede discrepar.
+    //
+    // Nada quedó escrito: el trigger es BEFORE INSERT, así que la propiedad no
+    // llegó a existir.
+    const limite = tenantLimitMessage(err)
+    if (limite) return { success: false, error: limite }
+
     console.error('[properties] createProperty failed:', err)
     return { success: false, error: 'Error al crear la propiedad. Intentá de nuevo.' }
   }

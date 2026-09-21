@@ -15,6 +15,14 @@ import type { EnsureInvitedStatus } from '@/lib/auth/ensure-invited-user'
 import { PLANS, getPlanConfig } from '@/lib/plans'
 import { DEFAULT_COUNTRY_CODE, defaultsForCountry } from '@/lib/tenant-provisioning'
 import { getAuthRedirectTo } from '@/lib/site-url'
+import {
+  tenantKindSchema,
+  foodCapabilitiesSchema,
+  mappingForTenantKind,
+  planLimitsForTenantKind,
+  tenantKindFrom,
+  DEFAULT_FOOD_CAPABILITIES,
+} from '@orderflow/validators'
 
 const PLATFORM_PATH    = '/platform'
 const TENANTS_PATH     = '/platform/tenants'
@@ -64,6 +72,17 @@ function slugify(name: string): string {
 
 const createTenantSchema = z.object({
   name:                z.string().min(2, 'El nombre debe tener al menos 2 caracteres').max(100),
+  // El TIPO de cliente, no el vertical. El vertical se deriva: así no existe
+  // forma de mandar un par (vertical, client_type) incoherente desde el
+  // cliente, porque el cliente nunca elige el vertical.
+  //
+  // Es requerido y falla cerrado: un valor desconocido no cae en un default
+  // permisivo, corta en la validación. Antes el alta ni siquiera nombraba el
+  // vertical y todo nacía real_estate por el default de la columna.
+  kind:                tenantKindSchema,
+  // Sólo se usan si kind === 'food_business'. Si no vienen, el alta toma el
+  // default del producto (los tres habilitados).
+  capabilities:        foodCapabilitiesSchema.optional(),
   country:             z.string().length(2).optional(),
   currency:            z.string().length(3).optional(),
   activate_immediately: z.boolean().optional(),
@@ -99,8 +118,21 @@ export async function createPlatformTenantAction(
   const country  = d.country ?? DEFAULT_COUNTRY_CODE
   const currency = d.currency ?? defaultsForCountry(country).currency
 
+  // El tipo decide TODO lo demás: en qué vertical cae, qué topes tiene y si
+  // las capacidades gastronómicas aplican. Un solo lugar de traducción.
+  const { vertical, clientType } = mappingForTenantKind(d.kind)
+  const limits = planLimitsForTenantKind(d.kind)
+
+  const capabilities = d.kind === 'food_business'
+    ? (d.capabilities ?? DEFAULT_FOOD_CAPABILITIES)
+    : null
+
   try {
     const tenant = await repo.createTenant({
+      vertical,
+      client_type:  clientType,
+      limits,
+      capabilities,
       name:                 d.name,
       slug,
       country,
@@ -824,7 +856,16 @@ export async function updateTenantPlanAction(
   }
 
   const tenant = await repo.getTenantById(tenantId)
-  if (!tenant) return { success: false, error: 'Inmobiliaria no encontrada.' }
+  if (!tenant) return { success: false, error: 'Cliente no encontrado.' }
+
+  // Los planes de agentes son inmobiliarios. Aplicarlos a un Particular
+  // pisaría su regla de 5 propiedades / 3 usuarios con los topes del plan; y
+  // gastronomía no tiene pricing definido, así que no se le adjudica uno
+  // prestado. La UI ya no ofrece los botones fuera de agency, pero la
+  // autoridad es esta: un POST armado a mano tiene que fallar igual.
+  if (tenantKindFrom(tenant.vertical, tenant.client_type) !== 'agency') {
+    return { success: false, error: 'Los planes de agentes son solo para inmobiliarias.' }
+  }
 
   const planCfg = getPlanConfig(parsed.data.plan_code)
 
@@ -878,9 +919,18 @@ export async function assignSetupOperatorAction(
     repo.getPlatformUserById(operatorId),
   ])
 
-  if (!tenant) return { success: false, error: 'Inmobiliaria no encontrada.' }
+  if (!tenant) return { success: false, error: 'Cliente no encontrado.' }
   if (!operator || operator.role !== 'operator') {
     return { success: false, error: 'Operator no encontrado.' }
+  }
+
+  // El setup por operator es del flujo inmobiliario. Un restaurante se
+  // configura entre el super_admin (AutoResponder, Android) y el owner
+  // (menú, negocio, IA): no hay tarea de operator en el medio, y el modo
+  // setup_operator ni siquiera puede tocar la carta. La UI ya no ofrece el
+  // select para gastronomía; la autoridad es esta.
+  if (tenant.vertical !== 'real_estate') {
+    return { success: false, error: 'El setup por operator sólo aplica a clientes inmobiliarios.' }
   }
 
   try {
@@ -958,7 +1008,7 @@ export async function startSetupImpersonationAction(
     const adminClient = createAdminClient()
     const { data: tenant } = await adminClient
       .from('tenants')
-      .select('status, onboarding_status, deleted_at')
+      .select('status, onboarding_status, deleted_at, vertical')
       .eq('id', tenantId)
       .maybeSingle()
 
@@ -966,6 +1016,12 @@ export async function startSetupImpersonationAction(
 
     if (!tenant || tenant.deleted_at != null || tenant.status !== 'trial') {
       return { success: false, error: 'Este tenant no está disponible para setup.' }
+    }
+    // Aunque exista una asignación histórica: un operator no entra en modo
+    // setup a un restaurante. Sólo la rama de operator — la impersonación
+    // normal del super_admin no pasa por acá y no cambia.
+    if (tenant.vertical !== 'real_estate') {
+      return { success: false, error: 'El setup por operator sólo aplica a clientes inmobiliarios.' }
     }
     if (SETUP_DONE_ONBOARDING.has(tenant.onboarding_status ?? '')) {
       return { success: false, error: 'Este tenant ya fue entregado. El acceso de setup ya no está disponible.' }

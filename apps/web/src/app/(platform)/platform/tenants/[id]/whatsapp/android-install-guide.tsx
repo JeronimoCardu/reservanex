@@ -30,7 +30,6 @@ import { deriveDeviceStatus, DEVICE_STATUS_LABEL, type DeviceStatus } from '@/li
 import type { AutoResponderEndpoints } from '@/lib/autoresponder-public-url'
 import {
   HEADER_DEVICE_TOKEN,
-  HEARTBEAT_INTERVAL_MINUTES,
   AUTORESPONDER_APP_PACKAGE,
   WHATSAPP_BUSINESS_PACKAGE,
 } from '@/lib/autoresponder-install-contract'
@@ -243,14 +242,29 @@ export function AndroidInstallGuide({ settings, endpointsResult }: AndroidInstal
         </p>
       </CollapsibleSection>
 
-      <CollapsibleSection n={4} title="Heartbeat">
+      <CollapsibleSection n={4} title="Señal de vida">
         <p>
-          Señal de vida del Android. Configurá en AutoResponder (o en cualquier scheduler del
-          teléfono) un POST cada {HEARTBEAT_INTERVAL_MINUTES} minutos a este endpoint, con el mismo
-          header de device token. Es lo que alimenta el estado &quot;Conectado / Sin señal&quot; de arriba.
+          No hay nada que configurar. ReservaNex registra actividad automáticamente cada vez
+          que AutoResponder envía un mensaje autenticado al webhook: el primer mensaje que
+          llega y vuelve respondido marca el Android como <span className="font-medium text-foreground">verificado</span>,
+          y cada mensaje posterior actualiza la &quot;última actividad&quot; de arriba.
         </p>
-        {ep && <CopyField label="Endpoint heartbeat" value={ep.heartbeat} />}
-        <CopyField label="Header" value={`${HEADER_DEVICE_TOKEN}: <tu device token>`} />
+        <p>
+          Sin mensajes no hay señal, así que &quot;sin actividad reciente&quot; significa silencio,
+          no un teléfono caído. Ninguna app auxiliar, ningún scheduler, ningún envío periódico.
+        </p>
+        <details className="rounded border border-dashed px-3 py-2 text-xs text-muted-foreground">
+          <summary className="cursor-pointer select-none">Endpoint de heartbeat (opcional, integraciones futuras)</summary>
+          <div className="mt-2 space-y-2">
+            <p>
+              Existe un endpoint de latido para un dispositivo o integración que pueda emitir un
+              POST periódico con el mismo device token. AutoResponder no lo hace y la instalación
+              no lo necesita.
+            </p>
+            {ep && <CopyField label="Endpoint heartbeat" value={ep.heartbeat} />}
+            <CopyField label="Header" value={`${HEADER_DEVICE_TOKEN}: <tu device token>`} />
+          </div>
+        </details>
       </CollapsibleSection>
 
       <CollapsibleSection n={5} title="Probar instalación" defaultOpen>

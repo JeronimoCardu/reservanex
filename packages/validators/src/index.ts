@@ -135,3 +135,30 @@ export type {
   MenuItemRowPatch,
   SaveMenuItemsInput,
 } from './menu'
+
+export {
+  clientTypeSchema,
+  tenantKindSchema,
+  createTenantKindSchema,
+  foodCapabilitiesSchema,
+  TENANT_KINDS,
+  TENANT_KIND_LABELS,
+  TENANT_KIND_HINTS,
+  DEFAULT_FOOD_CAPABILITIES,
+  mappingForTenantKind,
+  tenantKindFrom,
+  tenantKindLabel,
+  planLimitsForTenantKind,
+  foodCapabilitiesFrom,
+  canAcceptFoodOrders,
+  enabledFulfillments,
+  isFulfillmentEnabled,
+} from './tenant-kind'
+export type {
+  ClientType,
+  TenantKind,
+  TenantKindMapping,
+  TenantPlanLimits,
+  FoodCapabilities,
+  Fulfillment,
+} from './tenant-kind'

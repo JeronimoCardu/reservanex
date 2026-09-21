@@ -23,7 +23,7 @@ export default async function PlatformDashboardPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-xl font-semibold">Mis inmobiliarias</h1>
+          <h1 className="text-xl font-semibold">Mis clientes</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Resumen de tu cartera de clientes</p>
         </div>
 
@@ -37,7 +37,7 @@ export default async function PlatformDashboardPage() {
 
         {delayed > 0 && (
           <div className="flex items-center gap-2 rounded-md border border-yellow-300 bg-yellow-50 px-4 py-2.5 text-sm text-yellow-800 dark:border-yellow-700/50 dark:bg-yellow-900/20 dark:text-yellow-300">
-            <span className="font-semibold">{delayed}</span> inmobiliaria{delayed > 1 ? 's' : ''} con más de 72 hs sin entregar.
+            <span className="font-semibold">{delayed}</span> cliente{delayed > 1 ? 's' : ''} con más de 72 hs sin entregar.
           </div>
         )}
 
@@ -46,7 +46,7 @@ export default async function PlatformDashboardPage() {
             href="/platform/tenants/new"
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
           >
-            + Nueva inmobiliaria
+            + Nuevo cliente
           </Link>
           <Link
             href="/platform/tenants"
@@ -71,7 +71,7 @@ export default async function PlatformDashboardPage() {
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatCard label="Sellers"          value={stats.totalSellers}   />
-        <StatCard label="Inmobiliarias"    value={stats.totalTenants}   />
+        <StatCard label="Clientes"         value={stats.totalTenants}   />
         <StatCard label="Pendientes"       value={stats.pendingReview}  highlight={stats.pendingReview > 0} />
         <StatCard label="Para entregar"    value={stats.readyToDeliver} highlight={stats.readyToDeliver > 0} />
         <StatCard label="Entregadas"       value={stats.delivered}      />
@@ -83,7 +83,7 @@ export default async function PlatformDashboardPage() {
           href="/platform/tenants"
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
         >
-          Ver inmobiliarias
+          Ver clientes
         </Link>
         <Link
           href="/platform/pending"

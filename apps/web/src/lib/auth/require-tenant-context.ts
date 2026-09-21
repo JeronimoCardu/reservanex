@@ -3,7 +3,9 @@ import { createClient } from '@orderflow/supabase/server'
 import { createAdminClient } from '@orderflow/supabase/admin'
 import { parseAccessTokenClaims } from '@/lib/claims'
 import type { TenantRole } from '@orderflow/types'
-import { tenantVerticalSchema, type TenantVertical } from '@orderflow/validators'
+import { tenantVerticalSchema } from '@orderflow/validators'
+import type { TenantVertical, FoodCapabilities } from '@orderflow/validators'
+import { foodCapabilitiesFrom } from '@orderflow/validators'
 
 export type AccessMode = 'tenant_user' | 'setup_operator'
 
@@ -28,6 +30,13 @@ export type TenantContext = {
   // tenant, que es un eje distinto de los permisos de arriba: esos deciden qué
   // puede hacer ESTE USUARIO dentro de un módulo que ya existe.
   vertical:                TenantVertical
+  // Cierre multi-tipo — las capacidades del local gastronómico. Viajan en el
+  // contexto porque ya se leen en la misma query que verifica el acceso: no
+  // agregan un roundtrip y evitan que cada pantalla vuelva a consultarlas.
+  //
+  // Para un tenant que no es food_service vienen las tres en false, no en
+  // true: así ninguna pantalla inmobiliaria las use por accidente.
+  capabilities:            FoodCapabilities
   accessMode:              AccessMode
 }
 
@@ -61,11 +70,13 @@ const ACTIVE_STATUSES = new Set(['trial', 'active'])
 // Devuelve el rubro, que ya viene gratis en esta query: el acceso al tenant se
 // verifica en todos los caminos, así que es el único lugar donde leerlo sin
 // agregar un roundtrip.
-async function checkTenantAccess(tenantId: string): Promise<TenantVertical> {
+async function checkTenantAccess(
+  tenantId: string,
+): Promise<{ vertical: TenantVertical; capabilities: FoodCapabilities }> {
   const admin = createAdminClient()
   const { data } = await admin
     .from('tenants')
-    .select('status, vertical')
+    .select('status, vertical, delivery_enabled, takeaway_enabled, table_reservations_enabled')
     .eq('id', tenantId)
     .is('deleted_at', null)
     .maybeSingle()
@@ -74,7 +85,10 @@ async function checkTenantAccess(tenantId: string): Promise<TenantVertical> {
     redirect('/account-suspended')
   }
 
-  return parseVertical(data.vertical)
+  return {
+    vertical:     parseVertical(data.vertical),
+    capabilities: foodCapabilitiesFrom(data),
+  }
 }
 
 export async function requireTenantContext(): Promise<TenantContext> {
@@ -175,12 +189,13 @@ export async function requireTenantContext(): Promise<TenantContext> {
         canManageMenu:           false,
         canManageOrders:         false,
         vertical:                parseVertical(tenantState.vertical),
+        capabilities:            foodCapabilitiesFrom(tenantState),
         accessMode:              'setup_operator',
       }
     }
 
     // SA: verify the tenant is accessible (not suspended/cancelled/deleted).
-    const saVertical = await checkTenantAccess(imp.target_tenant_id)
+    const sa = await checkTenantAccess(imp.target_tenant_id)
 
     return {
       userId:                  user.id,
@@ -196,7 +211,8 @@ export async function requireTenantContext(): Promise<TenantContext> {
       canManageTableReservations: false,
       canManageMenu:           false,
       canManageOrders:         false,
-      vertical:                saVertical,
+      vertical:                sa.vertical,
+      capabilities:            sa.capabilities,
       accessMode:              'setup_operator',
     }
   }
@@ -205,7 +221,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
   if (claims.user_type !== 'tenant_user') redirect('/login')
 
   // Block suspended/cancelled tenants from accessing the CRM.
-  const vertical = await checkTenantAccess(claims.tenant_id)
+  const { vertical, capabilities } = await checkTenantAccess(claims.tenant_id)
 
   // Owners always have all permissions — no extra DB query needed.
   if (claims.role === 'owner') {
@@ -224,6 +240,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
       canManageMenu:           true,
       canManageOrders:         true,
       vertical,
+      capabilities,
       accessMode:              'tenant_user',
     }
   }
@@ -255,6 +272,7 @@ export async function requireTenantContext(): Promise<TenantContext> {
     canManageMenu:           perms?.can_manage_menu           ?? false,
     canManageOrders:         perms?.can_manage_orders         ?? false,
     vertical,
+    capabilities,
     accessMode:              'tenant_user',
   }
 }

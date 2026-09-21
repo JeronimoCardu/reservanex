@@ -3384,6 +3384,7 @@ export type Database = {
           approved_by: string | null
           assigned_seller_id: string | null
           business_hours: Json
+          client_type: string | null
           country: string
           created_at: string
           currency: string
@@ -3391,13 +3392,14 @@ export type Database = {
           deleted_at: string | null
           delivered_at: string | null
           delivered_by: string | null
+          delivery_enabled: boolean
           id: string
           language: string
           logo_url: string | null
-          max_owners: number
-          max_properties: number
-          max_receptionists: number
-          max_users: number
+          max_owners: number | null
+          max_properties: number | null
+          max_receptionists: number | null
+          max_users: number | null
           name: string
           onboarding_notes: string | null
           onboarding_started_at: string | null
@@ -3445,6 +3447,8 @@ export type Database = {
           site_config: Json
           slug: string
           status: Database["public"]["Enums"]["tenant_status"]
+          table_reservations_enabled: boolean
+          takeaway_enabled: boolean
           timezone: string
           trial_ends_at: string | null
           updated_at: string
@@ -3455,6 +3459,7 @@ export type Database = {
           approved_by?: string | null
           assigned_seller_id?: string | null
           business_hours?: Json
+          client_type?: string | null
           country?: string
           created_at?: string
           currency?: string
@@ -3462,13 +3467,14 @@ export type Database = {
           deleted_at?: string | null
           delivered_at?: string | null
           delivered_by?: string | null
+          delivery_enabled?: boolean
           id?: string
           language?: string
           logo_url?: string | null
-          max_owners?: number
-          max_properties?: number
-          max_receptionists?: number
-          max_users?: number
+          max_owners?: number | null
+          max_properties?: number | null
+          max_receptionists?: number | null
+          max_users?: number | null
           name: string
           onboarding_notes?: string | null
           onboarding_started_at?: string | null
@@ -3516,6 +3522,8 @@ export type Database = {
           site_config?: Json
           slug: string
           status?: Database["public"]["Enums"]["tenant_status"]
+          table_reservations_enabled?: boolean
+          takeaway_enabled?: boolean
           timezone?: string
           trial_ends_at?: string | null
           updated_at?: string
@@ -3526,6 +3534,7 @@ export type Database = {
           approved_by?: string | null
           assigned_seller_id?: string | null
           business_hours?: Json
+          client_type?: string | null
           country?: string
           created_at?: string
           currency?: string
@@ -3533,13 +3542,14 @@ export type Database = {
           deleted_at?: string | null
           delivered_at?: string | null
           delivered_by?: string | null
+          delivery_enabled?: boolean
           id?: string
           language?: string
           logo_url?: string | null
-          max_owners?: number
-          max_properties?: number
-          max_receptionists?: number
-          max_users?: number
+          max_owners?: number | null
+          max_properties?: number | null
+          max_receptionists?: number | null
+          max_users?: number | null
           name?: string
           onboarding_notes?: string | null
           onboarding_started_at?: string | null
@@ -3587,6 +3597,8 @@ export type Database = {
           site_config?: Json
           slug?: string
           status?: Database["public"]["Enums"]["tenant_status"]
+          table_reservations_enabled?: boolean
+          takeaway_enabled?: boolean
           timezone?: string
           trial_ends_at?: string | null
           updated_at?: string

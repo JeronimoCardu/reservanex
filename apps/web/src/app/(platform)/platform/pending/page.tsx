@@ -16,12 +16,12 @@ export default async function PendingTenantsPage() {
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold">Pendientes de aprobación</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">{pending.length} inmobiliarias esperan revisión</p>
+        <p className="text-sm text-muted-foreground mt-0.5">{pending.length} clientes esperan revisión</p>
       </div>
 
       {pending.length === 0 ? (
         <div className="rounded-lg border bg-background py-12 text-center text-sm text-muted-foreground">
-          No hay inmobiliarias pendientes. Todo al día.
+          No hay clientes pendientes. Todo al día.
         </div>
       ) : (
         <div className="space-y-2">

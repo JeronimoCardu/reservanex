@@ -1,3 +1,4 @@
+import { notFound } from 'next/navigation'
 import { requireTenantContext } from '@/lib/auth/require-tenant-context'
 import { requireRouteVertical } from '@/lib/auth/require-tenant-vertical'
 
@@ -16,5 +17,16 @@ import { requireRouteVertical } from '@/lib/auth/require-tenant-vertical'
 export default async function TableReservationsLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireTenantContext()
   requireRouteVertical(ctx, '/dashboard/table-reservations')
+
+  // Y además la capacidad del local. El guard de rubro dice que el módulo
+  // EXISTE para un gastronómico; esto dice que ESTE gastronómico lo tiene
+  // encendido. Son dos ejes distintos y los dos son server-side: el nav ya no
+  // muestra el link, pero escribir la URL tiene que fallar igual.
+  //
+  // Apagar la capacidad no borra nada: las reservas históricas siguen en la
+  // base y su ciclo de vida no cambia. Lo único que deja de poder pasar es que
+  // entren nuevas.
+  if (!ctx.capabilities.tableReservations) notFound()
+
   return <>{children}</>
 }

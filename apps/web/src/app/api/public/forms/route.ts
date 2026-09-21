@@ -3,6 +3,9 @@ import {
   createSubmissionRequestSchema,
   validateSubmissionPayload,
   isIntentAllowedForVertical,
+  foodCapabilitiesFrom,
+  canAcceptFoodOrders,
+  isFulfillmentEnabled,
   tenantVerticalSchema,
   foodOrderResolvedPayloadSchema,
   type FoodOrderInput,
@@ -78,6 +81,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, reason: 'intent_not_available' }, { status: 422 })
     }
 
+    // ── Capacidades del local (food_service) ─────────────────────────────
+    //
+    // El browser NO es autoridad. Que la carta no muestre el carrito o esconda
+    // el CTA de reservas es cortesía; lo que impide que entre una operación
+    // deshabilitada es esto. Un POST armado a mano, un formulario viejo abierto
+    // en otra pestaña o un bookmark llegan igual hasta acá.
+    //
+    // Se rechaza con el mismo 'intent_not_available' que el guard de vertical
+    // de arriba: desde afuera son el mismo hecho —ese trámite no está
+    // disponible en este tenant— y distinguirlos sólo le contaría a quien
+    // sondea cómo está configurado el local.
+    const caps = foodCapabilitiesFrom(tenant)
+
+    if (request.intent === 'table_reservation' && !caps.tableReservations) {
+      return NextResponse.json({ ok: false, reason: 'intent_not_available' }, { status: 422 })
+    }
+
+    if (request.intent === 'food_order' && !canAcceptFoodOrders(caps)) {
+      return NextResponse.json({ ok: false, reason: 'intent_not_available' }, { status: 422 })
+    }
+
+    // general_inquiry no se toca: no tiene capability propia y sigue siendo la
+    // vía de contacto aunque el local no tome pedidos ni reservas.
+
     // Validación real del payload, por intent. Devolvemos los errores por
     // campo para que el formulario pueda mostrarlos donde corresponde.
     const validation = validateSubmissionPayload(request.intent, request.payload)
@@ -99,6 +126,20 @@ export async function POST(req: NextRequest) {
 
     if (request.intent === 'food_order') {
       const input = validation.data as unknown as FoodOrderInput
+
+      // Y el fulfillment CONCRETO tiene que estar habilitado, no sólo alguno.
+      // Un local que hace retiro pero no delivery no puede recibir un pedido
+      // con envío porque alguien cambió el <select> en el inspector.
+      if (!isFulfillmentEnabled(caps, input.fulfillment)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            reason: 'invalid_fields',
+            errors: { fulfillment: 'Esa forma de entrega no está disponible.' },
+          },
+          { status: 422 },
+        )
+      }
 
       // §9 — EL REINTENTO GANA SOBRE EL CATÁLOGO.
       //

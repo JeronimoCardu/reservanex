@@ -299,8 +299,35 @@ const DEFINITIONS: Record<FormIntent, FormDefinition> = {
 
 // §13 — las definiciones viven en código tipado. No hay form builder para el
 // owner todavía; queremos formularios consistentes y seguros primero.
-export function getFormDefinition(params: { intent: FormIntent }): FormDefinition {
-  return DEFINITIONS[params.intent]
+export function getFormDefinition(params: {
+  intent: FormIntent
+  /**
+   * Los fulfillment habilitados del local. Sólo aplica a food_order.
+   *
+   * Se filtra ACÁ y no en el componente para que el servidor valide contra la
+   * MISMA definición que se dibujó: si el checkout no ofreció "delivery", el
+   * validador tampoco lo acepta, sin dos listas que puedan divergir. Es el
+   * mismo criterio que isFieldVisible, que ya se comparte entre render y
+   * validación por esta razón.
+   *
+   * Si no se pasa, la definición es la completa — que es lo correcto para
+   * cualquier lector que no esté en el contexto de un tenant concreto.
+   */
+  enabledFulfillments?: readonly string[]
+}): FormDefinition {
+  const definition = DEFINITIONS[params.intent]
+
+  if (params.intent !== 'food_order' || !params.enabledFulfillments) return definition
+
+  const permitidos = new Set(params.enabledFulfillments)
+  return {
+    ...definition,
+    fields: definition.fields.map((f) =>
+      f.name === 'fulfillment' && f.options
+        ? { ...f, options: f.options.filter((o) => permitidos.has(o.value)) }
+        : f,
+    ),
+  }
 }
 
 // ── Visibilidad condicional ────────────────────────────────────────────────

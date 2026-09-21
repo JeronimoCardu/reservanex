@@ -52,11 +52,16 @@ export function deriveDeviceStatus(params: {
   return 'offline'
 }
 
+// Los nombres internos (online/stale/offline) se conservan: son los umbrales
+// y nada más. Lo que cambia es lo que se AFIRMA: sin heartbeat no se puede
+// decir que un teléfono esté "online" u "offline" — sólo cuándo fue su última
+// actividad observada (un inbound autenticado, o un heartbeat si algún día
+// hay quien lo emita). El copy dice exactamente eso.
 export const DEVICE_STATUS_LABEL: Record<DeviceStatus, string> = {
   disabled:       'Desactivado',
   not_configured: 'Sin configurar',
-  never_seen:     'Nunca visto',
-  online:         'Online',
-  stale:          'Sin señal reciente',
-  offline:        'Offline',
+  never_seen:     'Sin actividad todavía',
+  online:         'Actividad reciente',
+  stale:          'Sin actividad reciente',
+  offline:        'Sin actividad hace tiempo',
 }

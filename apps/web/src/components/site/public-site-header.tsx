@@ -25,7 +25,29 @@ export function PublicSiteHeader({ tenant, waPhone, tenantSlug, backHref }: Prop
   const logoUrl = tenant.public_logo_url ?? tenant.logo_url
   const name    = tenant.public_name ?? tenant.name
 
-  const waText = encodeURIComponent(`Hola, quiero recibir información de propiedades de ${name}.`)
+  // El header es compartido por los dos rubros, y hasta el cierre de
+  // food_service hablaba en inmobiliario para los dos: el nav decía
+  // "Propiedades" apuntando a #properties —un ancla que en una carta no
+  // existe— y el texto de WhatsApp ofrecía "información de propiedades" a
+  // quien estaba mirando un menú.
+  //
+  // El rubro ya viaja en PublicTenant y ya se selecciona en getPublicTenant,
+  // así que se deriva acá y ningún llamador cambia.
+  //
+  // Los dos destinos son anclas REALES, verificadas: #properties existe en
+  // catalog-client.tsx y #menu en public-menu-client.tsx. Si mañana se agrega
+  // un rubro, el default inmobiliario deja de ser correcto — por eso el
+  // nombre de la variable es afirmativo y no un "else".
+  const esGastronomico = tenant.vertical === 'food_service'
+
+  const navLabel  = esGastronomico ? 'Menú'  : 'Propiedades'
+  const navAnchor = esGastronomico ? '#menu' : '#properties'
+
+  const waText = encodeURIComponent(
+    esGastronomico
+      ? `Hola, quiero hacer una consulta sobre ${name}.`
+      : `Hola, quiero recibir información de propiedades de ${name}.`,
+  )
   const waHref = waPhone ? `https://wa.me/${waPhone}?text=${waText}` : null
 
   return (
@@ -56,11 +78,11 @@ export function PublicSiteHeader({ tenant, waPhone, tenantSlug, backHref }: Prop
               className="hover:text-zinc-800 transition-colors flex items-center gap-1.5"
             >
               <span className="text-base" aria-hidden>←</span>
-              Propiedades
+              {navLabel}
             </Link>
           ) : (
-            <a href="#properties" className="hover:text-zinc-800 transition-colors">
-              Propiedades
+            <a href={navAnchor} className="hover:text-zinc-800 transition-colors">
+              {navLabel}
             </a>
           )}
         </nav>

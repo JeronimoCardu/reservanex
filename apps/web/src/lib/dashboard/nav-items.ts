@@ -15,7 +15,7 @@ import {
   ReceiptTextIcon,
 } from 'lucide-react'
 import type { TenantRole } from '@orderflow/types'
-import type { TenantVertical } from '@orderflow/validators'
+import type { TenantVertical, FoodCapabilities } from '@orderflow/validators'
 import { routeAllowsVertical } from './module-verticals'
 
 // Fase 3E-C3A1 — la definición del nav del dashboard, en UN solo lugar.
@@ -62,6 +62,8 @@ export interface NavVisibilityInput {
   role:            TenantRole
   vertical:        TenantVertical
   isSetupOperator: boolean
+  /** Capacidades del tenant gastronómico. Ausente = no aplica. */
+  capabilities?: FoodCapabilities | null
 }
 
 /**
@@ -75,11 +77,26 @@ export function visibleNavItems({
   role,
   vertical,
   isSetupOperator,
+  capabilities,
 }: NavVisibilityInput): DashboardNavItem[] {
   return ALL_NAV_ITEMS.filter((item) => {
     if (isSetupOperator && item.setupBlocked) return false
     if (item.ownerOnly && role !== 'owner') return false
     if (!routeAllowsVertical(item.href, vertical)) return false
+
+    // Las capacidades del local esconden módulos DENTRO de su vertical. El
+    // guard de vertical sigue siendo el de afuera: esto no lo reemplaza, lo
+    // afina.
+    //
+    // Sólo Reservas de mesa se oculta. Menú queda siempre —un restaurante
+    // tiene carta aunque no tome pedidos ni reservas— y Pedidos también,
+    // porque el histórico sigue siendo válido y hay que poder trabajarlo:
+    // apagar delivery no cancela los pedidos que ya entraron.
+    if (item.href === '/dashboard/table-reservations'
+        && capabilities && !capabilities.tableReservations) {
+      return false
+    }
+
     return true
   })
 }

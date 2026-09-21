@@ -49,17 +49,21 @@ export default async function TenantWhatsAppPage({ params }: { params: Promise<{
       {/* Two independent channels/providers — never merged into one form.
           conversation.whatsapp_account_id (Fase 4.1) remains the canonical
           source of which account an existing conversation routes through;
-          this page only manages the account records themselves. */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-muted-foreground">Meta (WhatsApp Cloud API)</h2>
-        <WhatsAppPlatformForm
-          tenantId={id}
-          settings={metaSettings ?? null}
-        />
-      </section>
+          this page only manages the account records themselves.
 
+          ORDEN (cierre V2): AutoResponder es el proveedor con el que se pone
+          en marcha un cliente nuevo — WhatsApp / WhatsApp Business en un
+          Android + AutoResponder for WA — así que va PRIMERO, seguido de su
+          guía de instalación. Meta Cloud API sigue soportado en el backend
+          (provider CHECK, /api/webhooks/whatsapp, ramas del worker) pero no es
+          el camino de un alta nueva: queda al final, colapsado, para que un
+          super_admin nuevo no crea que tiene que configurarlo. */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-muted-foreground">AutoResponder + MacroDroid</h2>
+        <h2 className="text-sm font-semibold text-muted-foreground">AutoResponder for WA</h2>
+        <p className="text-xs text-muted-foreground">
+          El canal de WhatsApp de ReservaNex V2: un Android con WhatsApp / WhatsApp Business
+          y AutoResponder for WA apuntando a los endpoints de abajo.
+        </p>
         <AutoResponderPlatformForm
           tenantId={id}
           settings={autoresponderSettings ?? null}
@@ -76,6 +80,22 @@ export default async function TenantWhatsAppPage({ params }: { params: Promise<{
           endpointsResult={endpointsResult}
         />
       </section>
+
+      <details className="rounded-lg border bg-muted/20">
+        <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-muted-foreground">
+          Meta (WhatsApp Cloud API) — proveedor alternativo
+        </summary>
+        <div className="space-y-3 px-4 pb-4">
+          <p className="text-xs text-muted-foreground">
+            Sólo para un cliente que opere con la API oficial de Meta. Un alta AutoResponder
+            no necesita nada de esta sección.
+          </p>
+          <WhatsAppPlatformForm
+            tenantId={id}
+            settings={metaSettings ?? null}
+          />
+        </div>
+      </details>
     </div>
   )
 }

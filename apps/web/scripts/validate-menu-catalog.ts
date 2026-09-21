@@ -692,8 +692,12 @@ async function main() {
     if (catF2.id && itemF2.id) ok('AE/AG. estado previo armado en F2 (food_service): 1 categoría + 1 item')
     else nok('AE/AG. no se pudo armar el estado previo', JSON.stringify({ catF2, itemF2 }))
 
+    // Cambiar el rubro exige el client_type coherente: desde el onboarding
+    // multi-tipo, (real_estate, NULL) no puede existir en la base. Ningún
+    // camino productivo cambia el vertical de un tenant — esto es una
+    // mutación de fixture, y tiene que respetar el invariante igual.
     const { error: eFlip } = await admin.from('tenants')
-      .update({ vertical: 'real_estate' } as never).eq('id', F2.id)
+      .update({ vertical: 'real_estate', client_type: 'agency' } as never).eq('id', F2.id)
     if (eFlip) nok('AE/AG. no se pudo cambiar el rubro del tenant descartable', eFlip.message)
 
     // AE. owner (ya real_estate) inserta un item con la categoría de su PROPIO

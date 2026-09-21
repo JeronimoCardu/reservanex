@@ -78,6 +78,8 @@ interface DynamicFormProps {
    * "¡Listo!" lo dibujaba el estado interno de ESTE componente, que el wrapper
    * podía remontar y perder.
    */
+  /** Fulfillment habilitados del tenant. Sólo aplica a food_order. */
+  enabledFulfillments?: readonly string[]
   onSubmitted?: (result: CreateSubmissionResponse) => void
 }
 
@@ -96,9 +98,15 @@ function controlClasses(hasError: boolean): string {
 
 export function DynamicForm({
   tenantSlug, intent, publicationRef, idempotencyKey, whatsappNumber,
-  extraPayload, onStructuredError, onSubmitted,
+  extraPayload, onStructuredError, onSubmitted, enabledFulfillments,
 }: DynamicFormProps) {
-  const definition = useMemo(() => getFormDefinition({ intent }), [intent])
+  // La definición se filtra por las capacidades del local: si no hace
+  // delivery, ese renglón no existe en el select. El servidor valida contra la
+  // MISMA función, así que no hay dos listas que puedan separarse.
+  const definition = useMemo(
+    () => getFormDefinition({ intent, enabledFulfillments }),
+    [intent, enabledFulfillments],
+  )
   const [values, setValues] = useState<FormValues>(() => initialFormValues(definition))
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [status, setStatus] = useState<Status>('idle')

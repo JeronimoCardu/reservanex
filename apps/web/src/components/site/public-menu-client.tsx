@@ -2,8 +2,14 @@
 
 import { useRef, useState } from 'react'
 import Image from 'next/image'
+import Link from 'next/link'
 import { UtensilsCrossedIcon, PlusIcon, ShoppingBagIcon } from 'lucide-react'
-import { formatMoneyString } from '@orderflow/validators'
+import {
+  formatMoneyString,
+  foodCapabilitiesFrom,
+  canAcceptFoodOrders,
+  enabledFulfillments,
+} from '@orderflow/validators'
 import type { PublicTenant, PublicMenuCategory, PublicMenuItem } from '@/lib/repositories/public-site.repository'
 import { formatPublicPrice } from '@/lib/site/public-menu'
 import { addToCart, cartCount, cartSubtotal, type CartLine } from '@/lib/site/cart'
@@ -103,6 +109,14 @@ export function PublicMenuClient({
     )
   }
 
+  // Las capacidades del local salen del tenant, no del navegador. Gobiernan
+  // qué se OFRECE; lo que se acepta lo vuelve a decidir el servidor en
+  // /api/public/forms, así que ocultar el carrito no es la defensa, es la
+  // cortesía.
+  const caps       = foodCapabilitiesFrom(tenant)
+  const tomaPedidos = canAcceptFoodOrders(caps)
+  const fulfillmentsHabilitados = enabledFulfillments(caps)
+
   return (
     <div className="flex min-h-screen flex-col bg-white">
       <PublicSiteHeader tenant={tenant} waPhone={waPhone} tenantSlug={tenantSlug} />
@@ -119,10 +133,48 @@ export function PublicMenuClient({
           <p className="mt-2 text-sm text-zinc-600">
             {tenant.public_description ?? 'Nuestra carta'}
           </p>
+
+          {/* ── Los otros dos trámites del rubro ──────────────────────────
+              Hasta el cierre de food_service, table_reservation y
+              general_inquiry existían como formularios que funcionaban
+              perfectamente y a los que no llevaba NINGÚN link: sólo se
+              llegaba tecleando la URL. Dos de los tres intents del rubro
+              eran, en la práctica, inalcanzables.
+
+              Van en la portada y no en la barra inferior a propósito: abajo
+              vive el carrito, que es la acción principal de esta página. Acá
+              arriba no le compiten — se leen antes de empezar a pedir, que es
+              cuando alguien decide si viene a comer o sólo quiere preguntar.
+
+              NO hay CTA hacia /formulario/food_order: un pedido se arma en la
+              carta y el carrito, y esa ruta ahora redirige acá mismo. */}
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            {/* "Reservar mesa" depende de su capability. "Hacer una consulta"
+                no: general_inquiry está siempre disponible para food_service,
+                sin interruptor propio — es la salida que le queda a un
+                visitante aunque el local no tome pedidos ni reservas. */}
+            {caps.tableReservations && (
+              <Link
+                href={`/site/${tenantSlug}/formulario/table_reservation`}
+                className="inline-flex items-center justify-center rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-900 transition-colors hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900 focus-visible:ring-offset-2"
+              >
+                Reservar mesa
+              </Link>
+            )}
+            <Link
+              href={`/site/${tenantSlug}/formulario/general_inquiry`}
+              className="inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-medium text-zinc-600 underline-offset-4 transition-colors hover:text-zinc-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900 focus-visible:ring-offset-2"
+            >
+              Hacer una consulta
+            </Link>
+          </div>
         </div>
       </section>
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-8 sm:py-10">
+      {/* id="menu" es el destino del nav del header en este rubro. El header
+          decide la etiqueta y el ancla según tenant.vertical; esto es la otra
+          mitad de ese contrato, y hay un test que no deja que se separen. */}
+      <main id="menu" className="mx-auto w-full max-w-3xl flex-1 px-4 py-8 sm:py-10">
         {total === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <UtensilsCrossedIcon className="h-10 w-10 text-zinc-300" aria-hidden="true" />
@@ -177,6 +229,11 @@ export function PublicMenuClient({
                               mostrando con su precio, pero NO se puede agregar.
                               El botón queda deshabilitado en vez de
                               desaparecer: así se ve que existe y que hoy no. */}
+                          {/* Si el local no toma pedidos, el botón no se
+                              deshabilita: no existe. Deshabilitado significa
+                              "hoy no se puede", y acá directamente no hay
+                              pedidos que hacer — la carta es una carta. */}
+                          {tomaPedidos && (
                           <button
                             type="button"
                             disabled={!item.available}
@@ -187,6 +244,7 @@ export function PublicMenuClient({
                             <PlusIcon className="h-3.5 w-3.5" />
                             Agregar
                           </button>
+                          )}
                         </div>
                       </div>
                     </li>
@@ -208,7 +266,9 @@ export function PublicMenuClient({
       )}
 
       {/* ── Barra del pedido ── */}
-      {lines.length > 0 && (
+      {/* Sin delivery ni retiro no hay carrito: el sitio queda como carta
+          digital. No se muestra un carrito muerto que al final va a rebotar. */}
+      {tomaPedidos && lines.length > 0 && (
         <div className="sticky bottom-0 z-30 border-t bg-white/95 px-4 py-3 backdrop-blur">
           <button
             type="button"
@@ -226,7 +286,7 @@ export function PublicMenuClient({
       )}
 
       <CartSheet
-        open={abierto}
+        open={tomaPedidos && abierto}
         onClose={() => setAbierto(false)}
         lines={lines}
         onLines={setLines}
@@ -235,6 +295,7 @@ export function PublicMenuClient({
         idempotencyKey={idempotencyKey}
         whatsappNumber={whatsappNumber}
         nextLineId={nextLineId}
+        enabledFulfillments={fulfillmentsHabilitados}
       />
 
       <PublicSiteFooter tenant={tenant} />

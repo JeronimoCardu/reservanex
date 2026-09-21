@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { MenuIcon, XIcon, BotIcon, LogOutIcon, SettingsIcon } from 'lucide-react'
 import { createClient } from '@orderflow/supabase/browser'
 import type { TenantRole } from '@orderflow/types'
-import type { TenantVertical } from '@orderflow/validators'
+import type { TenantVertical, FoodCapabilities } from '@orderflow/validators'
 import { COMING_SOON, visibleNavItems } from '@/lib/dashboard/nav-items'
 import { cn } from '@/lib/utils'
 
@@ -15,16 +15,17 @@ interface MobileNavProps {
   canAccessSettings: boolean
   // Fase 3E-C3A1 — ídem sidebar: la misma regla, no una copia de la regla.
   vertical:          TenantVertical
+  capabilities?:     FoodCapabilities | null
   isSetupOperator?:  boolean
 }
 
-export function MobileNav({ role, canAccessSettings, vertical, isSetupOperator = false }: MobileNavProps) {
+export function MobileNav({ role, canAccessSettings, vertical, capabilities, isSetupOperator = false }: MobileNavProps) {
   const pathname = usePathname()
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
 
-  const navItems = visibleNavItems({ role, vertical, isSetupOperator })
+  const navItems = visibleNavItems({ role, vertical, capabilities, isSetupOperator })
   const showSettings = isSetupOperator || role === 'owner' || canAccessSettings
 
   async function handleLogout() {

@@ -11,6 +11,7 @@ export const metadata: Metadata = { title: 'WhatsApp — Configuración — Rese
 const TABS = [
   { href: '/dashboard/settings/business',     label: 'Negocio',       ownerOnly: false },
   { href: '/dashboard/settings/whatsapp',     label: 'WhatsApp',      ownerOnly: false },
+  { href: '/dashboard/settings/services',     label: 'Servicios',     ownerOnly: true, foodOnly: true },
   { href: '/dashboard/settings/payments',     label: 'Pagos',         ownerOnly: true  },
   { href: '/dashboard/settings/bot',          label: 'Bot',           ownerOnly: true  },
   { href: '/dashboard/settings/reservations', label: 'Reservas IA',   ownerOnly: true  },
@@ -30,7 +31,8 @@ export default async function WhatsAppSettingsPage() {
       {/* Settings sub-nav */}
       <div className="border-b bg-background">
         <div className="flex gap-1 px-6 pt-4 overflow-x-auto">
-          {TABS.filter(t => !t.ownerOnly || ctx.role === 'owner').map(t => (
+          {TABS
+          .filter(t => (!t.ownerOnly || ctx.role === 'owner') && (!t.foodOnly || ctx.vertical === 'food_service')).map(t => (
             <Link
               key={t.href}
               href={t.href}

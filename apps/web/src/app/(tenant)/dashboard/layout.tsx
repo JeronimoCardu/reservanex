@@ -30,6 +30,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           role={ctx.role}
           canAccessSettings={ctx.canAccessSettings}
           vertical={ctx.vertical}
+          capabilities={ctx.capabilities}
           isSetupOperator={isSetupOperator}
         />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -37,6 +38,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             role={ctx.role}
             canAccessSettings={ctx.canAccessSettings}
             vertical={ctx.vertical}
+          capabilities={ctx.capabilities}
             isSetupOperator={isSetupOperator}
           />
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">

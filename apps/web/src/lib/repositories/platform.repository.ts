@@ -1,5 +1,11 @@
 import { createAdminClient } from '@orderflow/supabase/admin'
 import type { TenantRow, PlatformUserRow } from '@orderflow/types'
+import type {
+  ClientType,
+  FoodCapabilities,
+  TenantPlanLimits,
+  TenantVertical,
+} from '@orderflow/validators'
 import { isSafePublicSlug, DEFAULT_WORKSPACE_NAME } from '@/lib/tenant-provisioning'
 
 // All platform repository functions use the admin client and apply
@@ -76,6 +82,13 @@ export async function createTenant(input: {
   primary_owner_phone: string | null
   assigned_seller_id: string | null
   created_by_seller_id: string | null
+  // Onboarding multi-tipo. El vertical ya no se asume: lo decide el tipo de
+  // cliente elegido en el alta, y con él vienen los topes y —si es
+  // gastronómico— las capacidades que el alta configuró.
+  vertical: TenantVertical
+  client_type: ClientType | null
+  limits: TenantPlanLimits
+  capabilities: FoodCapabilities | null
 }): Promise<TenantRow> {
   const admin = createAdminClient()
 
@@ -106,6 +119,28 @@ export async function createTenant(input: {
       primary_owner_email: input.primary_owner_email,
       primary_owner_phone: input.primary_owner_phone,
       onboarding_notes:    input.onboarding_notes,
+
+      vertical:            input.vertical,
+      client_type:         input.client_type,
+
+      // NULL = sin límite, igual que en la base. Una inmobiliaria no tiene
+      // tope de producto; un particular sí.
+      max_properties:      input.limits.maxProperties,
+      max_users:           input.limits.maxUsers,
+      max_owners:          input.limits.maxOwners,
+      max_receptionists:   input.limits.maxReceptionists,
+
+      // Sólo se escriben para gastronomía. Para el resto quedan en su default
+      // y no las lee nadie: foodCapabilitiesFrom() devuelve todo en false
+      // cuando el vertical no es food_service.
+      ...(input.capabilities
+        ? {
+            delivery_enabled:           input.capabilities.delivery,
+            takeaway_enabled:           input.capabilities.takeaway,
+            table_reservations_enabled: input.capabilities.tableReservations,
+          }
+        : {}),
+
       ...(publicSlugCandidate ? { public_slug: publicSlugCandidate, public_site_enabled: true } : {}),
     })
     .select()
@@ -454,12 +489,17 @@ export async function listSetupAssignmentsByOperator(
 
   const { data, error } = await admin
     .from('tenant_setup_assignments')
-    .select('*, tenant:tenant_id(id, name, slug, setup_status, plan_code, plan_label, onboarding_status, status), operator:operator_id(id, name, email)')
+    .select('*, tenant:tenant_id(id, name, slug, setup_status, plan_code, plan_label, onboarding_status, status, vertical), operator:operator_id(id, name, email)')
     .eq('operator_id', operatorId)
     .order('assigned_at', { ascending: false })
 
   if (error) throw new Error(error.message)
-  return (data ?? []) as unknown as SetupAssignmentWithRelations[]
+
+  // Falla seguro: las asignaciones nuevas sobre gastronomía ya las rechaza
+  // assignSetupOperatorAction, pero una fila histórica podría existir. No se
+  // borra nada — se filtra al leer, y la impersonación la rechaza igual.
+  const filas = (data ?? []) as unknown as SetupAssignmentWithRelations[]
+  return filas.filter((a) => (a.tenant as { vertical?: string } | null)?.vertical === 'real_estate')
 }
 
 export async function createSetupAssignment(input: {
@@ -656,10 +696,12 @@ export async function getTenantSetupSignals(tenantId: string): Promise<{
   } | null
   lastDeviceSeenAt:       string | null
   publishedPropertyCount: number
+  /** Productos publicados y disponibles: el "catálogo" de un gastronómico. */
+  publishedMenuItemCount: number
 }> {
   const admin = createAdminClient()
 
-  const [ownersResult, aiResult, whatsappResult, propertiesResult] = await Promise.all([
+  const [ownersResult, aiResult, whatsappResult, propertiesResult, menuResult] = await Promise.all([
     admin.from('tenant_users').select('id').eq('tenant_id', tenantId).eq('role', 'owner').eq('active', true).limit(1),
     admin.from('ai_settings').select('id').eq('tenant_id', tenantId).maybeSingle(),
     admin
@@ -671,6 +713,9 @@ export async function getTenantSetupSignals(tenantId: string): Promise<{
       .limit(1)
       .maybeSingle(),
     admin.from('properties').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('published', true).is('deleted_at', null),
+    // Mismo criterio que el catálogo público: publicado y no archivado. Que
+    // esté disponible hoy no hace falta para "tener carta".
+    admin.from('menu_items').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('published', true).is('deleted_at', null),
   ])
 
   const whatsappRow = whatsappResult.data
@@ -687,5 +732,21 @@ export async function getTenantSetupSignals(tenantId: string): Promise<{
       : null,
     lastDeviceSeenAt:       whatsappRow?.last_device_seen_at ?? null,
     publishedPropertyCount: propertiesResult.count ?? 0,
+    publishedMenuItemCount: menuResult.count ?? 0,
   }
+}
+
+/**
+ * Propiedades vigentes de un tenant: las que ocupan cupo en el tope de un
+ * Particular. Mismo criterio que el trigger de límite (deleted_at IS NULL),
+ * para que "3 de 5" en la ficha cuente lo mismo que cuenta la base.
+ */
+export async function countActiveProperties(tenantId: string): Promise<number> {
+  const admin = createAdminClient()
+  const { count } = await admin
+    .from('properties')
+    .select('id', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
+    .is('deleted_at', null)
+  return count ?? 0
 }

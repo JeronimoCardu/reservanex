@@ -22,5 +22,11 @@ export const WHATSAPP_BUSINESS_PACKAGE = 'com.whatsapp.w4b'
 export const HEADER_DEVICE_TOKEN = 'x-reservanex-device-token'
 
 
+// Cadencia sugerida para el endpoint de heartbeat OPCIONAL. No es un
+// requisito de instalación: la guía ya no la pide, porque AutoResponder no
+// puede emitir un POST periódico y ReservaNex verifica el Android por el
+// primer inbound autenticado. Se conserva porque el contrato del endpoint
+// (y su test) fija que esta cadencia sea menor que el umbral "reciente" de
+// autoresponder-device-health.ts — si alguien lo usa, tiene que caber.
 export const HEARTBEAT_INTERVAL_MINUTES        = 2
 

@@ -66,7 +66,7 @@ function nuevaClaveIdempotencia(previa: string): string {
 }
 
 export function CartSheet({
-  open, onClose, lines, onLines, currency, tenantSlug, idempotencyKey, whatsappNumber, nextLineId,
+  open, onClose, lines, onLines, currency, tenantSlug, idempotencyKey, whatsappNumber, nextLineId, enabledFulfillments,
 }: {
   open:            boolean
   onClose:         () => void
@@ -77,6 +77,8 @@ export function CartSheet({
   idempotencyKey:  string
   whatsappNumber:  string | null
   nextLineId:      () => string
+  /** Fulfillment habilitados del local, derivados del tenant. */
+  enabledFulfillments: readonly string[]
 }) {
   const [flujo, setFlujo] = useState<CheckoutState>(INITIAL_CHECKOUT_STATE)
 
@@ -221,6 +223,7 @@ export function CartSheet({
             </div>
           ) : showsForm(flujo) ? (
             <DynamicForm
+              enabledFulfillments={enabledFulfillments}
               // Remontar con la clave nueva prepara el PRÓXIMO pedido. Ya no
               // puede borrar un éxito: en el paso success esto no está montado.
               key={claveIdem}

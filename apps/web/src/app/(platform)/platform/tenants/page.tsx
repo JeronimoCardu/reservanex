@@ -3,8 +3,9 @@ import Link from 'next/link'
 import { requirePlatformContext } from '@/lib/auth/require-platform-context'
 import * as repo from '@/lib/repositories/platform.repository'
 import { StatusBadge, isDelayed } from '@/components/platform/onboarding-badge'
+import { tenantKindLabel } from '@orderflow/validators'
 
-export const metadata: Metadata = { title: 'Inmobiliarias — ReservaNex' }
+export const metadata: Metadata = { title: 'Clientes — ReservaNex' }
 
 export default async function TenantsPage() {
   const ctx = await requirePlatformContext()
@@ -18,7 +19,7 @@ export default async function TenantsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">
-            {ctx.isSuperAdmin ? 'Todas las inmobiliarias' : 'Mis inmobiliarias'}
+            {ctx.isSuperAdmin ? 'Todos los clientes' : 'Mis clientes'}
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">{tenants.length} en total</p>
         </div>
@@ -32,9 +33,9 @@ export default async function TenantsPage() {
 
       {tenants.length === 0 ? (
         <div className="rounded-lg border bg-background py-12 text-center text-sm text-muted-foreground">
-          No hay inmobiliarias todavía.{' '}
+          No hay clientes todavía.{' '}
           <Link href="/platform/tenants/new" className="underline">
-            Crear la primera.
+            Crear el primero.
           </Link>
         </div>
       ) : (
@@ -62,6 +63,9 @@ export default async function TenantsPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{t.name}</span>
+                        <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+                          {tenantKindLabel(t.vertical, t.client_type)}
+                        </span>
                         {delayed && (
                           <span className="rounded-full bg-yellow-100 px-1.5 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
                             Demorado

@@ -12,6 +12,7 @@ import { deriveDeviceStatus } from '@/lib/autoresponder-device-health'
 import { deriveTenantSetupChecklist } from '@/lib/tenant-setup-status'
 import type { TenantSetupChecklist } from '@/lib/tenant-setup-status'
 import type { ActionResult } from '@/lib/action-result'
+import { tenantKindFrom } from '@orderflow/validators'
 
 export async function getTenantSetupChecklistAction(
   tenantId: string,
@@ -38,13 +39,18 @@ export async function getTenantSetupChecklistAction(
     lastDeviceSeenAt: signals.lastDeviceSeenAt,
   })
 
+  // El rubro sale del par (vertical, client_type) del tenant. Es lo que
+  // decide si "hay algo que ofrecer" son propiedades o productos.
   const checklist = deriveTenantSetupChecklist({
+    kind:                   tenantKindFrom(tenant.vertical, tenant.client_type),
     tenantActive:           tenant.status === 'trial' || tenant.status === 'active',
     ownerActive:            signals.ownerActive,
     aiConfigured:           signals.aiConfigured,
     whatsappStatus,
     deviceStatus,
+    lastDeviceSeenAt:       signals.lastDeviceSeenAt,
     publishedPropertyCount: signals.publishedPropertyCount,
+    publishedMenuItemCount: signals.publishedMenuItemCount,
   })
 
   return { success: true, data: checklist }

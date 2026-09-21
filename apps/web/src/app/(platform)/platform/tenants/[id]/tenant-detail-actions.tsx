@@ -30,11 +30,16 @@ import {
 } from '@/actions/platform'
 import type { TenantWithSeller } from '@/lib/repositories/platform.repository'
 import { PLAN_OPTIONS } from '@/lib/plans'
+import type { TenantKind } from '@orderflow/validators'
 
 const ONBOARDING_OPTIONS = [
   { value: 'pending_review',   label: 'Pendiente revisión' },
   { value: 'approved',         label: 'Aprobada'           },
-  { value: 'meta_setup',       label: 'Config. Meta'       },
+  // 'meta_setup' es el VALOR persistido (lo escribe platform-whatsapp.ts al
+  // configurar la cuenta y hay lógica que lo consulta): se conserva. El
+  // label sí era legacy, de cuando el transporte era Meta WABA. Hoy ese paso
+  // es AutoResponder + Android, así que se lo nombra por lo que es.
+  { value: 'meta_setup',       label: 'Configuración técnica' },
   { value: 'testing',          label: 'En pruebas'         },
   { value: 'ready_to_deliver', label: 'Lista para entregar'},
   { value: 'delivered',        label: 'Entregada'          },
@@ -50,6 +55,8 @@ const TENANT_STATUS_OPTIONS = [
 
 type Props = {
   tenant:              TenantWithSeller
+  /** Inmobiliaria / Particular / Gastronomía. Decide qué acciones existen. */
+  kind:                TenantKind
   sellers:             PlatformUserRow[]
   operators:           PlatformUserRow[]
   activeAssignmentId:  string | null
@@ -114,7 +121,7 @@ function InviteLinkFallbackDialog({
   )
 }
 
-export function TenantDetailActions({ tenant, sellers, operators, activeAssignmentId, isSuperAdmin, canEdit, canDeliver, canInvite }: Props) {
+export function TenantDetailActions({ kind, tenant, sellers, operators, activeAssignmentId, isSuperAdmin, canEdit, canDeliver, canInvite }: Props) {
   const router    = useRouter()
   const [isPending, startTransition] = useTransition()
   const [inviteLink, setInviteLink] = useState<string | null>(null)
@@ -342,8 +349,13 @@ export function TenantDetailActions({ tenant, sellers, operators, activeAssignme
         </Section>
       )}
 
-      {/* SA-only: Plan */}
-      {isSuperAdmin && (
+      {/* SA-only: Plan — SÓLO inmobiliaria. Los planes de agentes son el
+          modelo comercial inmobiliario: un Particular ya tiene su regla
+          (5 propiedades / 3 usuarios) y aplicarle "Plan 4 agentes" la
+          pisaría; y gastronomía no tiene pricing definido todavía — no se
+          inventa uno reusando este. La acción del servidor lo rechaza igual:
+          esto sólo evita mostrar botones que van a fallar. */}
+      {isSuperAdmin && kind === 'agency' && (
         <Section title="Plan comercial">
           <p className="text-xs text-muted-foreground mb-2">
             Cambiar plan actualiza los límites de owners, agentes y usuarios totales.
@@ -377,7 +389,9 @@ export function TenantDetailActions({ tenant, sellers, operators, activeAssignme
       )}
 
       {/* SA-only: Assign setup operator */}
-      {isSuperAdmin && operators.length > 0 && (
+      {/* Setup operator: sólo inmobiliario. La acción del servidor rechaza
+          food_service igual; esto evita ofrecer un select que va a fallar. */}
+      {isSuperAdmin && kind !== 'food_business' && operators.length > 0 && (
         <Section title="Setup operator">
           {activeAssignmentId ? (
             <div className="flex flex-col gap-2">

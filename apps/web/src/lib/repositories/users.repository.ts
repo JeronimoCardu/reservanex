@@ -131,10 +131,19 @@ export async function countActiveTenantUsers(
   return count ?? 0
 }
 
+/**
+ * NULL significa SIN LÍMITE, igual que en la columna.
+ *
+ * Esto es lo que antes decía `?? 5`: con las columnas ya nullables, ese
+ * fallback habría interpretado "sin límite" como "cinco" y habría topeado
+ * justo a las inmobiliarias, que son las que no deben tener tope. El default
+ * por ausencia de fila se mantiene conservador —si el tenant no existe no se
+ * crea nada— pero NULL se propaga tal cual.
+ */
 export type TenantLimits = {
-  maxOwners:        number
-  maxReceptionists: number
-  maxTotalUsers:    number
+  maxOwners:        number | null
+  maxReceptionists: number | null
+  maxTotalUsers:    number | null
 }
 
 export async function getTenantLimits(tenantId: string): Promise<TenantLimits> {
@@ -147,10 +156,15 @@ export async function getTenantLimits(tenantId: string): Promise<TenantLimits> {
     .maybeSingle()
 
   return {
-    maxOwners:        data?.max_owners        ?? 1,
-    maxReceptionists: data?.max_receptionists ?? 4,
-    maxTotalUsers:    data?.max_users         ?? 5,
+    maxOwners:        data?.max_owners        ?? null,
+    maxReceptionists: data?.max_receptionists ?? null,
+    maxTotalUsers:    data?.max_users         ?? null,
   }
+}
+
+/** ¿Llegó al tope? Con límite nulo, nunca. */
+export function limitReached(actual: number, max: number | null): boolean {
+  return max !== null && actual >= max
 }
 
 export async function validateWorkspacesInTenant(
