@@ -1,5 +1,6 @@
 import { createClient } from '../lib/supabase'
 import type { LLMTool } from '../lib/llm'
+import { customerSiteUrl, PUBLIC_PATHS } from '../lib/customer-site-url'
 
 export const sendPropertyLinkTool: LLMTool = {
   type: 'function',
@@ -25,10 +26,6 @@ export const sendPropertyLinkTool: LLMTool = {
   },
 }
 
-const SITE_BASE = (
-  process.env.SITE_URL ?? process.env.NEXT_PUBLIC_SITE_URL ?? 'https://reservanex.com'
-).replace(/\/$/, '')
-
 export async function executeSendPropertyLink(
   tenantId: string,
   rawArgs:  Record<string, unknown>,
@@ -51,7 +48,11 @@ export async function executeSendPropertyLink(
     return JSON.stringify({ error: 'No se pudo construir el link: tenant sin slug configurado.' })
   }
 
-  const catalogUrl = `${SITE_BASE}/site/${tenantSlug}`
+  // Nunca localhost hacia un cliente: sin base alcanzable, no hay link.
+  const catalogUrl = customerSiteUrl(PUBLIC_PATHS.site(tenantSlug))
+  if (!catalogUrl) {
+    return JSON.stringify({ error: 'No hay una URL pública alcanzable configurada. No mandes ningún link; derivá a una persona con escalate_to_human.' })
+  }
 
   if (propertyId) {
     const { data: property } = await supabase
@@ -63,7 +64,7 @@ export async function executeSendPropertyLink(
       .maybeSingle()
 
     if (property?.published && property?.slug) {
-      const url = `${SITE_BASE}/site/${tenantSlug}/properties/${property.slug}`
+      const url = customerSiteUrl(PUBLIC_PATHS.property(tenantSlug, property.slug))!
       console.log('[send_property_link] property link', { tenantId, propertyId, url })
       return `Podés ver fotos, videos y detalles completos acá:\n${url}`
     }

@@ -10,11 +10,22 @@ import { cancelRecentReservationTool, executeCancelRecentReservation }          
 import { checkPropertyAvailabilityTool, executeCheckPropertyAvailability }         from '../tools/check-property-availability'
 import { findNextAvailableDatesTool, executeFindNextAvailableDates }               from '../tools/find-next-available-dates'
 import { sendPublicCatalogLinkTool, executeSendPublicCatalogLink }                 from '../tools/send-public-catalog-link'
+import { sendTableReservationLinkTool, executeSendTableReservationLink }           from '../tools/send-table-reservation-link'
+import { customerSiteUrl, PUBLIC_PATHS }                                           from '../lib/customer-site-url'
 import { sendPropertyLinkTool, executeSendPropertyLink }                           from '../tools/send-property-link'
 import { sendPaymentDataTool, executeSendPaymentData }                             from '../tools/send-payment-data'
 import { saveContactNameTool, executeSaveContactName }                             from '../tools/save-contact-name'
 import { findDateMismatches, buildMismatchReply }                                  from '../tools/date-preprocessor'
 import { HUMAN_HANDOFF_MESSAGE, handoffModeForProvider } from '../lib/human-handoff'
+
+import {
+  foodCapabilitiesFromTenant,
+  isFoodService,
+  identityLine,
+  buildFoodDomainSection,
+  foodNameRule,
+  foodLinksRule,
+} from './food-domain'
 
 const DEFAULT_SYSTEM_PROMPT =
   'Eres un asistente de atención al cliente. Responde de forma clara, amable y concisa.'
@@ -62,13 +73,14 @@ function buildBotConfigSection(
   tenantName:    string,
   tone:          string,
   useEmojis:     boolean,
+  food:          boolean,
 ): string {
   const toneInstruction  = TONE_INSTRUCTIONS[tone] ?? TONE_INSTRUCTIONS['professional']!
   const emojiInstruction = useEmojis
     ? 'Podés usar emojis moderadamente cuando ayuden a que el mensaje sea más claro o amable.'
     : 'No uses emojis en tus respuestas.'
   return [
-    `Tu nombre es ${assistantName}. Representás a la inmobiliaria "${tenantName}".`,
+    identityLine(assistantName, tenantName, food),
     toneInstruction,
     emojiInstruction,
   ].join('\n')
@@ -158,9 +170,21 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
   // 1b. Fetch tenant name, slug, public site and payment config
   const { data: tenant } = await supabase
     .from('tenants')
-    .select('name, slug, public_slug, public_site_enabled, payment_alias, payment_cbu, payment_account_holder, payment_bank, payment_notes, payment_request_message')
+    .select('name, slug, public_slug, public_site_enabled, vertical, delivery_enabled, takeaway_enabled, table_reservations_enabled, payment_alias, payment_cbu, payment_account_holder, payment_bank, payment_notes, payment_request_message')
     .eq('id', ctx.tenantId)
     .single()
+
+  // ── El rubro decide el dominio entero ───────────────────────────────────────
+  //
+  // Hasta acá el responder era inmobiliario sin mirar tenants.vertical: a un
+  // restaurante que preguntaba "¿hacen delivery?" le contestaba que "en este
+  // canal gestionamos exclusivamente consultas sobre propiedades". No era un
+  // error del modelo — era exactamente lo que el prompt le decía que era.
+  //
+  // Un tenant que no es food_service sigue por el camino inmobiliario tal
+  // cual estaba. No hay default gastronómico: sólo lo es si su vertical lo es.
+  const food = isFoodService(tenant ?? {})
+  const caps = foodCapabilitiesFromTenant(tenant ?? {})
 
   // ── Derived settings (clamped to safe ranges) ───────────────────────────────
   const basePrompt  = settings?.system_prompt        ?? DEFAULT_SYSTEM_PROMPT
@@ -171,7 +195,7 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
   const delayMs     = Math.max(0, Math.min(settings?.response_delay_ms ?? 0, 5000))
 
   const assistantName    = settings?.assistant_name?.trim() || 'Asistente ReservaNex'
-  const tenantName       = tenant?.name ?? 'la inmobiliaria'
+  const tenantName       = tenant?.name ?? (food ? 'el negocio' : 'la inmobiliaria')
   const tone             = settings?.bot_tone ?? 'professional'
   const useEmojis        = settings?.bot_use_emojis ?? false
   const sendPropertyLinks = settings?.bot_send_property_links ?? true
@@ -185,11 +209,25 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
       : (settings.escalation_keywords as string[]).filter(Boolean)
 
   // Build catalog URL from tenant slug (used in system prompt + send_public_catalog_link tool)
-  const siteBase = (
-    process.env.SITE_URL ?? process.env.NEXT_PUBLIC_SITE_URL ?? 'https://reservanex.com'
-  ).replace(/\/$/, '')
+  // La base que un CLIENTE puede abrir desde su teléfono — no la del
+  // navegador de desarrollo ni la del webhook. Si no hay una alcanzable,
+  // publicCatalogUrl es null y el prompt sabe que no puede mandar links.
   const tenantSlug       = tenant?.public_slug ?? tenant?.slug
-  const publicCatalogUrl = tenantSlug ? `${siteBase}/site/${tenantSlug}` : null
+  const publicCatalogUrl = tenantSlug ? customerSiteUrl(PUBLIC_PATHS.site(tenantSlug)) : null
+
+  // Gastronomía: ¿hay algo en la carta? La consulta mínima autoritativa —un
+  // count, no el menú entero— para que el prompt no ofrezca "platos y
+  // precios" cuando hay cero publicados.
+  let publishedMenuItemCount = 0
+  if (food) {
+    const { count } = await supabase
+      .from('menu_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', ctx.tenantId)
+      .eq('published', true)
+      .is('deleted_at', null)
+    publishedMenuItemCount = count ?? 0
+  }
 
   // ── 2. Escalation keyword pre-check (deterministic, before LLM) ────────────
   if (escalationKeywords.length > 0) {
@@ -215,22 +253,35 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
   }
 
   // ── 3. Build dynamic tool set ───────────────────────────────────────────────
-  const tools = [
-    ...BASE_TOOLS,
-    // save_contact_name only when contact has no name yet — prevents overwriting valid names
-    ...(ctx.contactName ? [] : [saveContactNameTool]),
-    // link tools only when tenant has property links enabled
-    ...(sendPropertyLinks ? [sendPublicCatalogLinkTool, sendPropertyLinkTool] : []),
-  ]
+  // Gastronomía: sin herramientas de propiedades ni de reservas de estadía.
+  // Quedan escalar a humano, guardar nombre, datos de pago y el link a la
+  // carta (send_public_catalog_link apunta a /site/<slug>, que para un
+  // restaurante ES el menú).
+  const tools = food
+    ? [
+        escalateToHumanTool,
+        sendPaymentDataTool,
+        ...(ctx.contactName ? [] : [saveContactNameTool]),
+        ...(sendPropertyLinks ? [sendPublicCatalogLinkTool] : []),
+        // Reservar mesa: el link al formulario, sólo si el local toma reservas.
+        ...(sendPropertyLinks && caps.tableReservations ? [sendTableReservationLinkTool] : []),
+      ]
+    : [
+        ...BASE_TOOLS,
+        // save_contact_name only when contact has no name yet — prevents overwriting valid names
+        ...(ctx.contactName ? [] : [saveContactNameTool]),
+        // link tools only when tenant has property links enabled
+        ...(sendPropertyLinks ? [sendPublicCatalogLinkTool, sendPropertyLinkTool] : []),
+      ]
 
   // ── 4. Build system prompt ──────────────────────────────────────────────────
 
-  const botConfigSection = buildBotConfigSection(assistantName, tenantName, tone, useEmojis)
+  const botConfigSection = buildBotConfigSection(assistantName, tenantName, tone, useEmojis, food)
 
   const firstName   = ctx.contactName ? ctx.contactName.split(/\s+/)[0] : null
   const contactLine = ctx.contactName
     ? `Nombre del cliente: ${ctx.contactName}. Podés usar "${firstName}" de forma natural una vez (ej: "Gracias, ${firstName}."). No lo repitas en cada frase.`
-    : [
+    : food ? foodNameRule() : [
         'Nombre del cliente: desconocido.',
         'REGLA DE NOMBRE:',
         '  - Si el cliente solo saluda ("Hola", "Buenos días"), NO pidas el nombre todavía.',
@@ -244,7 +295,9 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
 
   // Instruction about property links — only shown when the tool is available
   const catalogDisplay = publicCatalogUrl ?? '(catálogo del tenant)'
-  const linksRule = sendPropertyLinks
+  const linksRule = food
+    ? foodLinksRule(sendPropertyLinks, publicCatalogUrl)
+    : sendPropertyLinks
     ? [
         '\nREGLA DE LINKS: NUNCA inventes URLs. Usá siempre los tools de links.',
         `  • send_property_link(property_id): usalo cuando el bot recomiende o mencione una propiedad concreta con property_id conocido. Si la propiedad está publicada envía link directo; si no, envía el catálogo automáticamente.`,
@@ -532,13 +585,19 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
     activeContextLine = '\n\n[Propiedad activa]\n' + lines.join('\n')
   }
 
+  // El bloque de dominio: inmobiliario (reservationLine, intacto) o
+  // gastronómico (derivado de las capacidades reales del tenant).
+  const domainSection = food
+    ? `[Qué ofrece el negocio]\n${buildFoodDomainSection({ caps, publicCatalogUrl, canSendLinks: sendPropertyLinks, publishedMenuItemCount })}`
+    : `[Gestión de reservas]\n${reservationLine}`
+
   const systemPrompt =
     `${basePrompt}\n\n` +
     `[Identidad del asistente]\n${botConfigSection}\n\n` +
     `[Contexto del cliente]\n${contactLine}\n\n` +
     `[Fecha actual]\n${dateContext}` +
     activeContextLine + '\n\n' +
-    `[Gestión de reservas]\n${reservationLine}`
+    domainSection
 
   // 5. Fetch recent conversation history
   // Fase 2B — ai_context_reset_at bounds the transcript. It is stamped when
@@ -729,6 +788,8 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
           toolResult = await executeCancelRecentReservation(ctx.tenantId, ctx.conversationId, toolCall.args)
         } else if (toolCall.name === 'send_public_catalog_link') {
           toolResult = await executeSendPublicCatalogLink(ctx.tenantId, toolCall.args)
+        } else if (toolCall.name === 'send_table_reservation_link') {
+          toolResult = await executeSendTableReservationLink(ctx.tenantId, toolCall.args)
         } else if (toolCall.name === 'send_property_link') {
           toolResult = await executeSendPropertyLink(ctx.tenantId, toolCall.args)
         } else if (toolCall.name === 'send_payment_data') {

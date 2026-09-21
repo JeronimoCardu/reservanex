@@ -22,7 +22,8 @@
     "validate:operations": "tsx src/scripts/validate-operation-requests.ts",
     "validate:race": "tsx src/scripts/validate-reservation-race.ts",
     "validate:pricing-parity": "tsx src/scripts/validate-pricing-parity.ts",
-    "validate:eligibility": "tsx src/scripts/validate-reservation-eligibility.ts"
+    "validate:eligibility": "tsx src/scripts/validate-reservation-eligibility.ts",
+    "validate:food-context": "tsx src/scripts/validate-food-context.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.47.10",
