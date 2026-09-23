@@ -20,7 +20,7 @@ const TABS = [
 
 export default async function BotSettingsPage() {
   const ctx = await requireTenantContext()
-  if (ctx.role !== 'owner') redirect('/dashboard/conversations')
+  if (ctx.role !== 'owner') redirect('/dashboard/attention')
 
   const result   = await getBotSettingsAction()
   const settings = result.success ? result.data! : null

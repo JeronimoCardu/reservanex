@@ -28,7 +28,7 @@ const SOLO_GASTRO = [
 ]
 const TRANSVERSALES = [
   '/dashboard',
-  '/dashboard/conversations',
+  '/dashboard/attention',
   '/dashboard/requests',
   '/dashboard/contacts',
   '/dashboard/tasks',
@@ -121,7 +121,7 @@ describe('visibleNavItems', () => {
   })
 
   it('los links transversales aparecen en los dos rubros', () => {
-    for (const ruta of ['/dashboard/conversations', '/dashboard/requests', '/dashboard/contacts', '/dashboard/tasks']) {
+    for (const ruta of ['/dashboard/attention', '/dashboard/requests', '/dashboard/contacts', '/dashboard/tasks']) {
       expect(links(FOOD), ruta).toContain(ruta)
       expect(links(REAL), ruta).toContain(ruta)
     }

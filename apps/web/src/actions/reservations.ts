@@ -13,7 +13,8 @@ import type { NoteRow } from '@/lib/repositories/notes.repository'
 import type { ReservationEventRow } from '@/lib/repositories/reservation-events.repository'
 
 const RESERVATIONS_PATH = '/dashboard/reservations'
-const DETAIL_PATH = (id: string) => `/dashboard/conversations/${id}`
+// Atención humana V2 — antes se revalidaba también /dashboard/conversations/[id],
+// donde vivía el panel de reserva. Esa surface ya no existe.
 
 // ─── Confirm ─────────────────────────────────────────────────────────────────
 
@@ -93,10 +94,9 @@ export async function confirmReservationAction(reservationId: string): Promise<A
   }
 
   try {
-    const { conversation_id } = await repo.confirmReservation(ctx.tenantId, reservationId, ctx.userId)
+    await repo.confirmReservation(ctx.tenantId, reservationId, ctx.userId)
     await events.createReservationEvent(ctx.tenantId, reservationId, ctx.userId, 'confirmed', {})
     revalidatePath(RESERVATIONS_PATH)
-    if (conversation_id) revalidatePath(DETAIL_PATH(conversation_id))
     return { success: true }
   } catch (err) {
     if (err instanceof Error && err.message === 'NOT_FOUND') {
@@ -138,10 +138,9 @@ export async function completeReservationAction(reservationId: string): Promise<
   }
 
   try {
-    const { conversation_id } = await repo.completeReservation(ctx.tenantId, reservationId, ctx.userId)
+    await repo.completeReservation(ctx.tenantId, reservationId, ctx.userId)
     await events.createReservationEvent(ctx.tenantId, reservationId, ctx.userId, 'completed', {})
     revalidatePath(RESERVATIONS_PATH)
-    if (conversation_id) revalidatePath(DETAIL_PATH(conversation_id))
     return { success: true }
   } catch (err) {
     if (err instanceof Error && err.message === 'NOT_FOUND') {
@@ -174,7 +173,7 @@ export async function cancelReservationAction(
   }
 
   try {
-    const { conversation_id } = await repo.cancelReservation(
+    await repo.cancelReservation(
       ctx.tenantId,
       reservationId,
       ctx.userId,
@@ -184,7 +183,6 @@ export async function cancelReservationAction(
       reason: parsed.data.reason ?? null,
     })
     revalidatePath(RESERVATIONS_PATH)
-    if (conversation_id) revalidatePath(DETAIL_PATH(conversation_id))
     return { success: true }
   } catch (err) {
     if (err instanceof Error && err.message === 'NOT_FOUND') {
@@ -353,7 +351,7 @@ export async function rescheduleReservationAction(
   const pricing_breakdown: Record<string, unknown> = quote.ok ? quote.breakdown : {}
 
   try {
-    const { conversation_id } = await repo.rescheduleReservation(ctx.tenantId, reservationId, {
+    await repo.rescheduleReservation(ctx.tenantId, reservationId, {
       start_date,
       end_date,
       guests,
@@ -376,7 +374,6 @@ export async function rescheduleReservationAction(
       new_guests:     guests,
     })
     revalidatePath(RESERVATIONS_PATH)
-    if (conversation_id) revalidatePath(DETAIL_PATH(conversation_id))
     return { success: true }
   } catch (err) {
     if (err instanceof Error && err.message === 'NOT_FOUND') {
@@ -584,7 +581,6 @@ export async function createReservationAction(
     })
 
     revalidatePath(RESERVATIONS_PATH)
-    if (d.conversation_id) revalidatePath(DETAIL_PATH(d.conversation_id))
 
     return { success: true, data: { id: reservation.id } }
   } catch {
@@ -615,13 +611,12 @@ export async function updateReservationStatusAction(
   }
 
   try {
-    const { conversation_id } = await repo.updateReservationStatus(
+    await repo.updateReservationStatus(
       ctx.tenantId,
       reservationId,
       parsed.data.status,
     )
     revalidatePath(RESERVATIONS_PATH)
-    if (conversation_id) revalidatePath(DETAIL_PATH(conversation_id))
     return { success: true }
   } catch (err) {
     if (err instanceof Error && err.message === 'NOT_FOUND') {

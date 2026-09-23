@@ -13,7 +13,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { ReservationStatusBadge } from '@/components/tenant/conversations/reservation-status-badge'
+import { ReservationStatusBadge } from '@/components/tenant/reservations/reservation-status-badge'
 import { createAvailabilityBlockAction, deleteAvailabilityBlockAction } from '@/actions/property-availability'
 import type { PropertyAvailabilityBlock } from '@/lib/repositories/property-availability.repository'
 import type { UpcomingPropertyReservation } from '@/lib/repositories/reservations.repository'

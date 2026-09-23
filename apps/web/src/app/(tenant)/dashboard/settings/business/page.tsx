@@ -21,7 +21,7 @@ const TABS = [
 export default async function BusinessSettingsPage() {
   const ctx = await requireTenantContext()
 
-  if (ctx.role !== 'owner' && !ctx.canAccessSettings) redirect('/dashboard/conversations')
+  if (ctx.role !== 'owner' && !ctx.canAccessSettings) redirect('/dashboard/attention')
 
   const result   = await getBusinessSettingsAction()
   const settings = result.success ? result.data! : null

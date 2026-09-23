@@ -7,7 +7,7 @@ import { MenuIcon, XIcon, BotIcon, LogOutIcon, SettingsIcon } from 'lucide-react
 import { createClient } from '@orderflow/supabase/browser'
 import type { TenantRole } from '@orderflow/types'
 import type { TenantVertical, FoodCapabilities } from '@orderflow/validators'
-import { COMING_SOON, visibleNavItems } from '@/lib/dashboard/nav-items'
+import { COMING_SOON, visibleNavItems, type NavBadges } from '@/lib/dashboard/nav-items'
 import { cn } from '@/lib/utils'
 
 interface MobileNavProps {
@@ -17,9 +17,12 @@ interface MobileNavProps {
   vertical:          TenantVertical
   capabilities?:     FoodCapabilities | null
   isSetupOperator?:  boolean
+  // Atención humana V2 — contadores por badgeKey, calculados una vez en el
+  // layout con el cliente del usuario (RLS). Un badge sólo se pinta si > 0.
+  badges?:           NavBadges
 }
 
-export function MobileNav({ role, canAccessSettings, vertical, capabilities, isSetupOperator = false }: MobileNavProps) {
+export function MobileNav({ role, canAccessSettings, vertical, capabilities, isSetupOperator = false, badges }: MobileNavProps) {
   const pathname = usePathname()
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -83,8 +86,9 @@ export function MobileNav({ role, canAccessSettings, vertical, capabilities, isS
             {/* Navigation */}
             <nav className="flex-1 overflow-y-auto px-2 py-2">
               <div className="space-y-0.5">
-                {navItems.map(({ label, href, icon: Icon }) => {
+                {navItems.map(({ label, href, icon: Icon, badgeKey }) => {
                   const isActive = pathname.startsWith(href)
+                  const badge    = badgeKey ? (badges?.[badgeKey] ?? 0) : 0
                   return (
                     <Link
                       key={href}
@@ -98,7 +102,18 @@ export function MobileNav({ role, canAccessSettings, vertical, capabilities, isS
                       )}
                     >
                       <Icon className="h-4 w-4 shrink-0" />
-                      {label}
+                      <span className="flex-1 truncate">{label}</span>
+                      {badge > 0 && (
+                        <span
+                          className={cn(
+                            'ml-auto inline-flex min-w-[1.375rem] items-center justify-center rounded-full px-1.5 text-[11px] font-semibold tabular-nums',
+                            isActive ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-amber-500 text-white',
+                          )}
+                          aria-label={`${badge} pendientes`}
+                        >
+                          {badge > 99 ? '99+' : badge}
+                        </span>
+                      )}
                     </Link>
                   )
                 })}

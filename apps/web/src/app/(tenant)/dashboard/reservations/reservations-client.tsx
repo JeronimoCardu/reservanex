@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import Link from 'next/link'
 import {
   CalendarIcon,
   UsersIcon,
@@ -21,6 +20,7 @@ import {
   EyeIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { buildContactWhatsAppHref } from '@/lib/human-attention/contact-whatsapp-href'
 import {
   confirmReservationAction,
   cancelReservationAction,
@@ -30,7 +30,7 @@ import {
 } from '@/actions/reservations'
 import type { ReservationWithDetails } from '@/lib/repositories/reservations.repository'
 import type { ReservationDocumentBadge } from '@/lib/repositories/reservation-badges.repository'
-import { ReservationStatusBadge } from '@/components/tenant/conversations/reservation-status-badge'
+import { ReservationStatusBadge } from '@/components/tenant/reservations/reservation-status-badge'
 import { ReservationDetailDrawer } from '@/components/tenant/reservations/reservation-detail-drawer'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -406,6 +406,9 @@ function ActionsDropdown({
   const canBeConfirmed   = isPreReserved && canConfirm
   const canBeRescheduled = (isPreReserved || isConfirmed) && canConfirm
   const canBeCancelled   = !isCancelled && !isCompleted && canConfirm
+  // Atención humana V2 — ya no hay chat en ReservaNex: la conversación ocurre
+  // en WhatsApp. El link va al contacto, no a una ruta que dejó de existir.
+  const whatsappHref     = buildContactWhatsAppHref(reservation.contact?.phone)
 
   function handleConfirm() {
     startTransition(async () => {
@@ -481,17 +484,19 @@ function ActionsDropdown({
             </DropdownMenuItem>
           </>
         )}
-        {reservation.conversation_id && (
+        {whatsappHref && (
           <>
             {(canBeConfirmed || canBeCompleted || canBeRescheduled || canBeCancelled) && <DropdownMenuSeparator />}
             <DropdownMenuItem asChild>
-              <Link
-                href={`/dashboard/conversations/${reservation.conversation_id}`}
+              <a
+                href={whatsappHref}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="gap-2 flex items-center"
               >
                 <MessageSquareIcon className="h-3.5 w-3.5" />
-                Abrir chat
-              </Link>
+                Abrir WhatsApp
+              </a>
             </DropdownMenuItem>
           </>
         )}

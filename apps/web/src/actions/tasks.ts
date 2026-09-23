@@ -66,7 +66,7 @@ export async function createTaskAction(input: unknown): Promise<ActionResult<{ i
     const task = await taskRepo.createTask(ctx.tenantId, ctx.userId, workspaceId, parsed.data)
     revalidatePath(TASKS_PATH)
     if (parsed.data.conversation_id) {
-      revalidatePath(`/dashboard/conversations/${parsed.data.conversation_id}`)
+      revalidatePath(`/dashboard/attention`)
     }
     if (parsed.data.contact_id) {
       revalidatePath(`/dashboard/contacts/${parsed.data.contact_id}`)
@@ -102,7 +102,7 @@ export async function updateTaskAction(id: string, input: unknown): Promise<Acti
   try {
     await taskRepo.updateTask(ctx.tenantId, id, parsed.data)
     revalidatePath(TASKS_PATH)
-    if (task.conversation_id) revalidatePath(`/dashboard/conversations/${task.conversation_id}`)
+    if (task.conversation_id) revalidatePath(`/dashboard/attention`)
     if (task.contact_id)      revalidatePath(`/dashboard/contacts/${task.contact_id}`)
     return { success: true }
   } catch {
@@ -131,7 +131,7 @@ export async function updateTaskStatusAction(
   try {
     await taskRepo.updateTaskStatus(ctx.tenantId, id, parsed.data.status)
     revalidatePath(TASKS_PATH)
-    if (task.conversation_id) revalidatePath(`/dashboard/conversations/${task.conversation_id}`)
+    if (task.conversation_id) revalidatePath(`/dashboard/attention`)
     if (task.contact_id)      revalidatePath(`/dashboard/contacts/${task.contact_id}`)
     return { success: true }
   } catch {
@@ -152,7 +152,7 @@ export async function deleteTaskAction(id: string): Promise<ActionResult> {
   try {
     await taskRepo.deleteTask(ctx.tenantId, id)
     revalidatePath(TASKS_PATH)
-    if (task.conversation_id) revalidatePath(`/dashboard/conversations/${task.conversation_id}`)
+    if (task.conversation_id) revalidatePath(`/dashboard/attention`)
     if (task.contact_id)      revalidatePath(`/dashboard/contacts/${task.contact_id}`)
     return { success: true }
   } catch {

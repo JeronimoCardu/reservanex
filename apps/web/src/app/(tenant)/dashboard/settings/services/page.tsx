@@ -28,7 +28,7 @@ export default async function ServicesSettingsPage() {
 
   // Owner solamente: qué modalidades ofrece el local es una decisión comercial,
   // del mismo orden que Pagos o Sitio público. can_access_settings no alcanza.
-  if (ctx.role !== 'owner') redirect('/dashboard/conversations')
+  if (ctx.role !== 'owner') redirect('/dashboard/attention')
 
   // Y sólo para gastronomía. Server-side, no por ocultar el tab.
   if (ctx.vertical !== 'food_service') notFound()

@@ -10,7 +10,7 @@ import { listActiveTenantUsers } from '@/lib/repositories/tenant-users.repositor
 import { EditContactDialog } from '@/components/tenant/contacts/edit-contact-dialog'
 import { ArchiveContactDialog } from '@/components/tenant/contacts/archive-contact-dialog'
 import { ContactSourceBadge } from '@/components/tenant/contacts/contact-source-badge'
-import { ConversationList } from '@/components/tenant/conversations/conversation-list'
+import { ContactConversations } from '@/components/tenant/contacts/contact-conversations'
 import { NoteList } from '@/components/tenant/notes/note-list'
 import { AddNoteDialog } from '@/components/tenant/notes/add-note-dialog'
 import { TaskList } from '@/components/tenant/tasks/task-list'
@@ -81,10 +81,9 @@ export default async function ContactDetailPage({
               </p>
             </div>
           ) : (
-            <ConversationList
+            <ContactConversations
               conversations={conversations}
-              currentUserId={ctx.userId}
-              tenantUsers={tenantUsers}
+              contactPhone={contact.phone}
             />
           )}
         </TabsContent>

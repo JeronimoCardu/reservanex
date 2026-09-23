@@ -6,5 +6,5 @@ export default async function DashboardPage() {
   if (ctx.accessMode === 'setup_operator') {
     redirect('/dashboard/properties')
   }
-  redirect('/dashboard/conversations')
+  redirect('/dashboard/attention')
 }

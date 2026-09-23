@@ -2,6 +2,7 @@
 
 import { useState, useTransition, useEffect, useCallback } from 'react'
 import Link from 'next/link'
+import { buildContactWhatsAppHref } from '@/lib/human-attention/contact-whatsapp-href'
 import { toast } from 'sonner'
 import {
   CalendarIcon, UsersIcon, PhoneIcon, BotIcon, ClockIcon,
@@ -21,7 +22,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ReservationStatusBadge } from '@/components/tenant/conversations/reservation-status-badge'
+import { ReservationStatusBadge } from '@/components/tenant/reservations/reservation-status-badge'
 import type { ReservationWithDetails } from '@/lib/repositories/reservations.repository'
 import type { NoteRow } from '@/lib/repositories/notes.repository'
 import type { ReservationEventRow } from '@/lib/repositories/reservation-events.repository'
@@ -257,10 +258,12 @@ function DetailTab({ reservation }: { reservation: ReservationWithDetails }) {
                 <PhoneIcon className="h-3 w-3" /> {contact.phone}
               </p>
             )}
-            {reservation.conversation_id && (
-              <Link href={`/dashboard/conversations/${reservation.conversation_id}`} className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline">
-                <MessageSquareIcon className="h-3 w-3" /> Abrir conversación
-              </Link>
+            {/* Atención humana V2 — la conversación ocurre en WhatsApp, no en
+                ReservaNex. El link va al contacto. */}
+            {buildContactWhatsAppHref(contact.phone) && (
+              <a href={buildContactWhatsAppHref(contact.phone)!} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline">
+                <MessageSquareIcon className="h-3 w-3" /> Abrir WhatsApp
+              </a>
             )}
           </div>
         ) : (
@@ -1239,11 +1242,11 @@ export function ReservationDetailDrawer({
                       <XCircleIcon className="h-3 w-3" /> Cancelar
                     </Button>
                   )}
-                  {reservation.conversation_id && (
+                  {buildContactWhatsAppHref(reservation.contact?.phone) && (
                     <Button size="sm" variant="outline" className="h-7 text-xs gap-1" asChild>
-                      <Link href={`/dashboard/conversations/${reservation.conversation_id}`}>
-                        <MessageSquareIcon className="h-3 w-3" /> Chat
-                      </Link>
+                      <a href={buildContactWhatsAppHref(reservation.contact?.phone)!} target="_blank" rel="noopener noreferrer">
+                        <MessageSquareIcon className="h-3 w-3" /> WhatsApp
+                      </a>
                     </Button>
                   )}
                 </div>

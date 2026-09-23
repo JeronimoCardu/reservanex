@@ -33,7 +33,7 @@ import type { TenantVertical } from '@orderflow/validators'
 
 /**
  * Módulos con rubro. Un href SIN entrada acá es TRANSVERSAL a propósito:
- * conversaciones, solicitudes, contactos, tareas, usuarios, configuración y
+ * atención humana, solicitudes, contactos, tareas, usuarios, configuración y
  * workspaces existen igual en los dos rubros.
  *
  * Las claves son prefijos de ruta: se compara con startsWith, así que

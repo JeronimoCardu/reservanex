@@ -66,7 +66,7 @@ export const PERMISSION_FIELDS: readonly PermissionField[] = [
     key:         'can_assign_conversations',
     label:       'Asignar conversaciones',
     description: 'Puede auto-asignarse y liberar conversaciones',
-    module:      '/dashboard/conversations',
+    module:      '/dashboard/attention',
   },
   {
     key:         'can_access_settings',

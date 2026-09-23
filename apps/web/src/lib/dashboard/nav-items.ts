@@ -1,6 +1,6 @@
 import type { ElementType } from 'react'
 import {
-  MessageSquareIcon,
+  HeadsetIcon,
   Users2Icon,
   Building2Icon,
   CheckSquareIcon,
@@ -35,10 +35,23 @@ export interface DashboardNavItem {
   icon:         ElementType
   ownerOnly:    boolean
   setupBlocked: boolean
+  /**
+   * Atención humana V2 — qué contador muestra este link como badge. El número
+   * lo calcula el layout del dashboard UNA vez (respetando las RLS del usuario)
+   * y lo reciben el sidebar y el mobile nav por props; acá sólo se declara la
+   * clave. Sin badgeKey, sin badge.
+   */
+  badgeKey?:    NavBadgeKey
 }
 
+export type NavBadgeKey = 'attention'
+export type NavBadges   = Partial<Record<NavBadgeKey, number>>
+
 export const ALL_NAV_ITEMS: readonly DashboardNavItem[] = [
-  { label: 'Conversaciones',       href: '/dashboard/conversations',      icon: MessageSquareIcon,   ownerOnly: false, setupBlocked: true  },
+  // Atención humana V2 — reemplaza a Conversaciones. No es un inbox: es la
+  // bandeja de clientes esperando una persona. El badge cuenta CASOS pendientes
+  // (conversaciones con human_attention_pending), no mensajes.
+  { label: 'Atención humana',      href: '/dashboard/attention',          icon: HeadsetIcon,         ownerOnly: false, setupBlocked: true, badgeKey: 'attention' },
   // Transversal a propósito: presenta los kinds que haya en el tenant
   // (reservation_request, inquiry, visit_request, table_request, order_request).
   { label: 'Solicitudes',          href: '/dashboard/requests',           icon: InboxIcon,           ownerOnly: false, setupBlocked: true  },
