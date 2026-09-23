@@ -10,8 +10,18 @@ import {
 import * as repo from '@/lib/repositories/conversations.repository'
 import type { ActionResult } from '@/lib/action-result'
 
-const LIST_PATH   = '/dashboard/conversations'
-const DETAIL_PATH = (id: string) => `/dashboard/conversations/${id}`
+// Atención humana V2 — la surface /dashboard/conversations ya no existe. Lo que
+// estas acciones cambian se refleja en la bandeja de atención (y en su badge,
+// que vive en el layout) y en la ficha del contacto.
+const ATTENTION_PATH = '/dashboard/attention'
+const LAYOUT_PATH    = '/dashboard'
+const CONTACT_PATH   = (contactId: string) => `/dashboard/contacts/${contactId}`
+
+function revalidateConversationSurfaces(contactId?: string | null): void {
+  revalidatePath(ATTENTION_PATH)
+  revalidatePath(LAYOUT_PATH, 'layout')
+  if (contactId) revalidatePath(CONTACT_PATH(contactId))
+}
 
 export async function createConversationAction(
   input: unknown,
@@ -47,7 +57,7 @@ export async function createConversationAction(
 
   try {
     const conversation = await repo.createConversation(ctx.tenantId, parsed.data)
-    revalidatePath(LIST_PATH)
+    revalidateConversationSurfaces()
     return { success: true, data: { id: conversation.id } }
   } catch (err) {
     console.error('[conversations] create failed:', err)
@@ -83,8 +93,7 @@ export async function updateConversationAction(
 
   try {
     await repo.updateConversation(ctx.tenantId, id, parsed.data)
-    revalidatePath(LIST_PATH)
-    revalidatePath(DETAIL_PATH(id))
+    revalidateConversationSurfaces(conversation.contact_id)
     return { success: true }
   } catch (err) {
     console.error('[conversations] update failed:', err)
@@ -129,8 +138,7 @@ export async function assignConversationAction(
 
   try {
     await repo.assignConversation(ctx.tenantId, id, assignedUserId)
-    revalidatePath(LIST_PATH)
-    revalidatePath(DETAIL_PATH(id))
+    revalidateConversationSurfaces(conversation.contact_id)
     return { success: true }
   } catch (err) {
     console.error('[conversations] assign failed:', err)
@@ -154,8 +162,7 @@ export async function closeConversationAction(
 
   try {
     await repo.closeConversation(ctx.tenantId, id, { reactivateAi: options?.reactivateAi })
-    revalidatePath(LIST_PATH)
-    revalidatePath(DETAIL_PATH(id))
+    revalidateConversationSurfaces(conversation.contact_id)
     return { success: true }
   } catch (err) {
     console.error('[conversations] close failed:', err)
@@ -176,8 +183,7 @@ export async function reopenConversationAction(id: string): Promise<ActionResult
 
   try {
     await repo.reopenConversation(ctx.tenantId, id)
-    revalidatePath(LIST_PATH)
-    revalidatePath(DETAIL_PATH(id))
+    revalidateConversationSurfaces(conversation.contact_id)
     return { success: true }
   } catch (err) {
     console.error('[conversations] reopen failed:', err)
@@ -209,7 +215,7 @@ export async function associatePropertyAction(
 
   try {
     await repo.associateProperty(ctx.tenantId, conversationId, propertyId, unitId)
-    revalidatePath(DETAIL_PATH(conversationId))
+    revalidateConversationSurfaces()
     return { success: true }
   } catch (err) {
     console.error('[conversations] associate-property failed:', err)
@@ -237,8 +243,7 @@ export async function updateConversationLeadStatusAction(
 
   try {
     await repo.updateLeadStatus(ctx.tenantId, id, status, ctx.userId)
-    revalidatePath(LIST_PATH)
-    revalidatePath(DETAIL_PATH(id))
+    revalidateConversationSurfaces(conversation.contact_id)
     return { success: true }
   } catch (err) {
     console.error('[conversations] update-lead-status failed:', err)
@@ -267,8 +272,7 @@ export async function setAiModeAction(
 
   try {
     await repo.setAiMode(ctx.tenantId, id, parsed.data.mode)
-    revalidatePath(LIST_PATH)
-    revalidatePath(DETAIL_PATH(id))
+    revalidateConversationSurfaces(conversation.contact_id)
     return { success: true }
   } catch (err) {
     console.error('[conversations] set-ai-mode failed:', err)
@@ -291,8 +295,7 @@ export async function reactivateConversationAiAction(
 
   try {
     await repo.reactivateConversationAi(ctx.tenantId, id, ctx.userId)
-    revalidatePath(LIST_PATH)
-    revalidatePath(DETAIL_PATH(id))
+    revalidateConversationSurfaces(conversation.contact_id)
     return {
       success: true,
       warning: 'La IA fue reactivada. Volverá a responder automáticamente los próximos mensajes del cliente.',
@@ -300,5 +303,40 @@ export async function reactivateConversationAiAction(
   } catch (err) {
     console.error('[conversations] reactivate-ai failed:', err)
     return { success: false, error: 'Error al reactivar la IA. Intentá de nuevo.' }
+  }
+}
+
+// ── Atención humana V2 ──────────────────────────────────────────────────────
+//
+// "Marcar como atendido" es la ÚNICA forma de cerrar un ciclo de atención
+// humana: ReservaNex no ve lo que el negocio responde desde WhatsApp Business,
+// así que "el humano atendió" no se detecta, se declara. Es la misma escritura
+// que reactivar la IA (repo.reactivateConversationAi): una persona se hizo
+// cargo, el asistente retoma, y queda registrado quién y cuándo.
+//
+// Permisos: owner y receptionist, como reactivateConversationAiAction. Lo que
+// un receptionist PUEDE marcar lo deciden las RLS de conversations (sin asignar
+// o asignadas a él): si la fila no es visible, el UPDATE no matchea y el
+// resultado es "no encontrada", nunca un cambio sobre un caso ajeno.
+export async function markHumanAttentionAttendedAction(
+  conversationId: string,
+): Promise<ActionResult<{ conversationId: string }>> {
+  const ctx = await requireTenantContext()
+  if (ctx.accessMode === 'setup_operator') return { success: false, error: 'No disponible en modo setup.' }
+
+  if (ctx.role !== 'owner' && ctx.role !== 'receptionist') {
+    return { success: false, error: 'No tenés permiso para marcar atenciones como atendidas.' }
+  }
+
+  const conversation = await repo.getConversationById(ctx.tenantId, conversationId)
+  if (!conversation) return { success: false, error: 'Atención no encontrada.' }
+
+  try {
+    await repo.reactivateConversationAi(ctx.tenantId, conversationId, ctx.userId)
+    revalidateConversationSurfaces(conversation.contact_id)
+    return { success: true, data: { conversationId } }
+  } catch (err) {
+    console.error('[attention] mark-attended failed:', { conversationId, error: err instanceof Error ? err.message : String(err) })
+    return { success: false, error: 'No se pudo marcar como atendido. Intentá de nuevo.' }
   }
 }

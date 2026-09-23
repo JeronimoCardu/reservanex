@@ -418,7 +418,11 @@ export type Database = {
           closed_at: string | null
           contact_id: string
           created_at: string
+          human_attention_email_sent_at: string | null
+          human_attention_pending: boolean | null
           human_attention_requested_at: string | null
+          human_attention_resolved_at: string | null
+          human_attention_resolved_by: string | null
           human_until: string | null
           id: string
           last_message_at: string | null
@@ -458,7 +462,11 @@ export type Database = {
           closed_at?: string | null
           contact_id: string
           created_at?: string
+          human_attention_email_sent_at?: string | null
+          human_attention_pending?: boolean | null
           human_attention_requested_at?: string | null
+          human_attention_resolved_at?: string | null
+          human_attention_resolved_by?: string | null
           human_until?: string | null
           id?: string
           last_message_at?: string | null
@@ -498,7 +506,11 @@ export type Database = {
           closed_at?: string | null
           contact_id?: string
           created_at?: string
+          human_attention_email_sent_at?: string | null
+          human_attention_pending?: boolean | null
           human_attention_requested_at?: string | null
+          human_attention_resolved_at?: string | null
+          human_attention_resolved_by?: string | null
           human_until?: string | null
           id?: string
           last_message_at?: string | null
@@ -544,6 +556,13 @@ export type Database = {
             columns: ["contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_human_attention_resolved_by_fkey"
+            columns: ["human_attention_resolved_by"]
+            isOneToOne: false
+            referencedRelation: "tenant_users"
             referencedColumns: ["id"]
           },
           {

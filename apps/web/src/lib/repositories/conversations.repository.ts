@@ -1,6 +1,7 @@
 import type { ConversationRow, ContactRow, ConversationStatus, AiMode } from '@orderflow/types'
 import type { CreateConversationInput, UpdateConversationInput } from '@orderflow/validators'
 import { createClient } from '@orderflow/supabase/server'
+import { humanAttentionAttendedPatch } from '@/lib/human-attention/semantics'
 
 export type ConversationWithContact = ConversationRow & {
   contact: ContactRow
@@ -173,6 +174,27 @@ export async function setAiMode(
   return data
 }
 
+/**
+ * Atención humana V2 — "Marcar como atendido" y "reactivar la IA" son la MISMA
+ * escritura: una persona declara que se hizo cargo, y el asistente retoma.
+ *
+ * Además de lo que ya hacía (IA autonomous, contador y motivo del handoff a
+ * cero, actor de la reactivación), cierra el ciclo de atención y deja la
+ * ventana HUMAN y el contexto coherentes:
+ *
+ *   - human_attention_resolved_at/by: la única escritura de "atendido" del
+ *     sistema. Ni el worker ni el trigger la tocan.
+ *   - human_until = null: antes quedaba stale. Con un valor vencido, una toma
+ *     manual posterior se revertía sola en el próximo inbound (human_expired).
+ *   - ai_context_reset_at = now(): lo que pasó mientras atendía una persona
+ *     (incluidos los inbound sin respuesta registrada, porque ReservaNex no ve
+ *     lo que se contesta desde WhatsApp Business) no vuelve a entrar al
+ *     contexto. Misma semántica que la reactivación por expiración del worker.
+ *
+ * human_attention_requested_at NO se borra: es el historial del último ciclo, y
+ * un ciclo nuevo lo sobreescribe con now() (> resolved_at ⇒ pendiente otra vez).
+ * Los mensajes no se tocan.
+ */
 export async function reactivateConversationAi(
   tenantId:  string,
   id:        string,
@@ -183,15 +205,7 @@ export async function reactivateConversationAi(
 
   const { data, error } = await supabase
     .from('conversations')
-    .update({
-      ai_mode:               'autonomous',
-      ai_auto_replies_count: 0,
-      ai_handoff_reason:     null,
-      ai_handoff_at:         null,
-      ai_reactivated_at:     now,
-      ai_reactivated_by:     userId,
-      needs_human_attention:  false,
-    })
+    .update(humanAttentionAttendedPatch(userId, now))
     .eq('tenant_id', tenantId)
     .eq('id', id)
     .select()
@@ -199,6 +213,57 @@ export async function reactivateConversationAi(
 
   if (error) throw new Error(error.message)
   return data
+}
+
+// ── Atención humana V2 — la bandeja ─────────────────────────────────────────
+//
+// Filtra por human_attention_pending, la columna generada que define
+// "pendiente" (open ∧ requested_at ∧ no resuelto después). Se lee con el
+// cliente del usuario a propósito: las RLS de conversations deciden qué ve un
+// receptionist (sin asignar o asignadas a él) y el owner ve todo. Nada acá
+// reimplementa esa regla.
+
+export type HumanAttentionRow = Pick<
+  ConversationRow,
+  | 'id' | 'contact_id' | 'channel' | 'status' | 'ai_mode' | 'human_until'
+  | 'ai_handoff_reason' | 'assigned_user_id'
+  | 'human_attention_requested_at' | 'human_attention_resolved_at' | 'human_attention_email_sent_at'
+  | 'last_message_content' | 'last_message_sender_type' | 'last_message_at'
+> & {
+  contact: { name: string | null; phone: string | null } | null
+}
+
+const HUMAN_ATTENTION_COLUMNS =
+  'id, contact_id, channel, status, ai_mode, human_until, ai_handoff_reason, assigned_user_id, ' +
+  'human_attention_requested_at, human_attention_resolved_at, human_attention_email_sent_at, ' +
+  'last_message_content, last_message_sender_type, last_message_at, ' +
+  'contact:contacts(name, phone)'
+
+export async function listPendingHumanAttention(tenantId: string): Promise<HumanAttentionRow[]> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('conversations')
+    .select(HUMAN_ATTENTION_COLUMNS)
+    .eq('tenant_id', tenantId)
+    .eq('human_attention_pending', true)
+    // Más antiguo primero: el que más espera va arriba.
+    .order('human_attention_requested_at', { ascending: true })
+    .limit(200)
+
+  if (error) throw new Error(error.message)
+  return (data ?? []) as unknown as HumanAttentionRow[]
+}
+
+export async function countPendingHumanAttention(tenantId: string): Promise<number> {
+  const supabase = await createClient()
+  const { count, error } = await supabase
+    .from('conversations')
+    .select('id', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
+    .eq('human_attention_pending', true)
+
+  if (error) throw new Error(error.message)
+  return count ?? 0
 }
 
 export async function closeConversation(

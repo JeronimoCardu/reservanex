@@ -435,13 +435,17 @@ export async function executeCreatePendingReservation(
     .eq('tenant_id', tenantId)
     .eq('conversation_id', conversationId)
 
-  // Flag conversation for human attention
+  // Flag conversation for human attention.
+  //
+  // Atención humana V2: esto NO abre un ciclo de atención humana
+  // (human_attention_requested_at). Una pre-reserva pendiente no es un cliente
+  // esperando una persona: la IA sigue autonomous y la reserva se trabaja desde
+  // Reservas, que es su superficie. requested_at es exclusivo de los handoffs
+  // reales (escalate_to_human, límite de auto-replies, falta de datos de pago,
+  // toma manual); escribirlo acá metía cada pre-reserva en la bandeja.
   await supabase
     .from('conversations')
-    .update({
-      needs_human_attention:        true,
-      human_attention_requested_at: new Date().toISOString(),
-    })
+    .update({ needs_human_attention: true })
     .eq('id', conversationId)
     .eq('tenant_id', tenantId)
 
