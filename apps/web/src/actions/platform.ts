@@ -7,11 +7,12 @@ import { createAdminClient } from '@orderflow/supabase/admin'
 import * as repo from '@/lib/repositories/platform.repository'
 import type { ActionResult } from '@/lib/action-result'
 import {
-  ensureInvitedUser,
-  ENSURE_RATE_LIMIT,
-  ENSURE_REDIRECT_INVALID,
-} from '@/lib/auth/ensure-invited-user'
-import type { EnsureInvitedStatus } from '@/lib/auth/ensure-invited-user'
+  issueAccessLink,
+  ACCESS_LINK_RATE_LIMIT,
+  ACCESS_LINK_REDIRECT_INVALID,
+  type AccessLink,
+} from '@/lib/auth/issue-access-link'
+import { sendAccessEmail } from '@/lib/auth/send-access-email'
 import { PLANS, getPlanConfig } from '@/lib/plans'
 import { DEFAULT_COUNTRY_CODE, defaultsForCountry } from '@/lib/tenant-provisioning'
 import { getAuthRedirectTo } from '@/lib/site-url'
@@ -35,27 +36,6 @@ const VALID_ONBOARDING = new Set([
 const VALID_TENANT_STATUS = new Set(['trial', 'active', 'suspended', 'cancelled', 'churned'])
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-// Auth errors from Supabase have non-enumerable properties (name, message, status, code),
-// so JSON.stringify(error) returns '{}'. This function reads them explicitly.
-function serializeAuthError(err: unknown): Record<string, unknown> {
-  if (err == null) return { raw: null }
-  const e = err as Record<string, unknown>
-  const out: Record<string, unknown> = {
-    name:    e['name'],
-    message: e['message'],
-    status:  e['status'],
-    code:    e['code'],
-  }
-  // Pick up any additional enumerable or own-property fields
-  try {
-    const names = Object.getOwnPropertyNames(err)
-    for (const key of names) {
-      if (!(key in out)) out[key] = e[key]
-    }
-  } catch { /* ignore */ }
-  return out
-}
 
 function slugify(name: string): string {
   return name
@@ -375,9 +355,10 @@ export async function invitePrimaryTenantOwnerAction(tenantId: string): Promise<
   const normalizedEmail = tenant.primary_owner_email.toLowerCase().trim()
   const admin           = createAdminClient()
 
-  let redirectTo: string
+  // Se valida la configuración temprano para fallar con un mensaje útil; la
+  // URL en sí la arma issueAccessLink.
   try {
-    redirectTo = getAuthRedirectTo()
+    getAuthRedirectTo()
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'Error de configuración del servidor.' }
   }
@@ -402,39 +383,36 @@ export async function invitePrimaryTenantOwnerAction(tenantId: string): Promise<
   }
 
   if (existingTU) {
-    // Owner already has a tenant_users record — resend via ensureInvitedUser.
-    // This handles both unconfirmed (resend invite) and confirmed (recovery email) cases.
-    let emailSent  = false
-    let inviteLink: string | undefined
-    let status: EnsureInvitedStatus | undefined
-    let lastErrorCode: string | undefined
-    let lastErrorMessage: string | undefined
+    // El owner ya tiene su fila de tenant_users: acá no hay nada que persistir
+    // antes, así que se emite el acceso y se manda el email de ReservaNex.
+    // issueAccessLink decide invite vs recovery, y el copy lo acompaña.
+    let emailSent = false
+    let kind: AccessLink['kind'] | undefined
     try {
-      const result = await ensureInvitedUser(normalizedEmail, redirectTo)
-      status     = result.status
-      emailSent  = result.status !== 'email_not_sent'
-      inviteLink = result.inviteLink
-      lastErrorCode    = result.lastErrorCode
-      lastErrorMessage = result.lastErrorMessage
+      const link = await issueAccessLink(normalizedEmail, { allowRecoveryForConfirmed: true })
+      kind = link.kind
+      const envio = await sendAccessEmail({
+        to: normalizedEmail, role: 'owner', kind: link.kind, accessUrl: link.url,
+        businessName: tenant.name, recipientName: tenant.primary_owner_name,
+      })
+      emailSent = envio.ok
 
       console.log('[platform:invite-owner] resend', {
-        tenantId,
-        email:             normalizedEmail,
-        authUserId:        existingTU.id,
-        mode:              result.status,
-        emailSent,
-        lastErrorCode,
-        lastErrorMessage,
+        tenantId, email: normalizedEmail, authUserId: existingTU.id, kind, emailSent,
       })
     } catch (resendErr) {
       const errMsg = resendErr instanceof Error ? resendErr.message : String(resendErr)
-      console.warn('[platform:invite-owner] ensureInvitedUser failed during resend (non-fatal)', {
+      console.warn('[platform:invite-owner] issueAccessLink failed during resend (non-fatal)', {
         tenantId,
         email: normalizedEmail,
         error: errMsg,
       })
     }
 
+    // owner_invited_at/by significan "se generó la invitación", no "el email se
+    // entregó": hoy se marcan igual aunque el envío falle, y esa semántica se
+    // conserva. Reinterpretarla sería cambiar el significado de una columna
+    // histórica sin migración.
     try {
       await repo.markOwnerInvited(tenantId, ctx.userId)
     } catch (markErr) {
@@ -448,59 +426,44 @@ export async function invitePrimaryTenantOwnerAction(tenantId: string): Promise<
     revalidatePath(`${TENANTS_PATH}/${tenantId}`)
 
     if (!emailSent) {
-      const reason = lastErrorMessage ? ` (motivo: ${lastErrorMessage})` : ''
       return {
         success: true,
-        data:    { inviteLink },
-        warning: inviteLink
-          ? `No se pudo enviar el email automáticamente${reason}. Copiá el link de invitación y envíaselo al owner por otro medio.`
-          : `No se pudo enviar el email ni generar un link de invitación${reason}. Intentá de nuevo en unos minutos.`,
+        warning: 'No se pudo enviar el email automáticamente. Revisá la configuración de Resend (RESEND_API_KEY y dominio verificado) y volvé a intentar.',
       }
     }
 
-    // status === 'invited' means a genuine fresh invite went out; 'recovery_sent'
-    // means the owner had ALREADY confirmed their email at some point (e.g.
-    // mid-flow on /auth/accept-invite, or fully onboarded already) — sending
-    // another "invite" would be misleading, so this is worded differently.
-    if (status === 'recovery_sent') {
+    // 'recovery' significa que el owner YA había confirmado su cuenta alguna
+    // vez: decirle "te invitamos de nuevo" sería engañoso, y el email que
+    // recibió tampoco lo dice.
+    if (kind === 'recovery') {
       return { success: true, warning: 'El owner ya había confirmado su cuenta anteriormente — se le envió un email de acceso, no una invitación nueva.' }
     }
     return { success: true }
   }
 
-  // ── Step 2: First-time invite — use ensureInvitedUser to create + send ───
-  let authUserId: string | null = null
-  let isNewUser  = false
-  let emailSent  = false
-  let inviteLink: string | undefined
-  let lastErrorMessage: string | undefined
-
+  // ── Step 2: Primera invitación — emitir el acceso (NO envía email) ───────
+  // El email sale recién en el Step 5, con tenant_users ya persistido.
+  let link: AccessLink
   try {
-    const result = await ensureInvitedUser(normalizedEmail, redirectTo)
-    authUserId = result.authUserId
-    isNewUser  = result.isNewUser
-    emailSent  = result.status !== 'email_not_sent'
-    inviteLink = result.inviteLink
-    lastErrorMessage = result.lastErrorMessage
+    link = await issueAccessLink(normalizedEmail, { allowRecoveryForConfirmed: true })
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : ''
-    console.error('[platform:invite-owner] ensureInvitedUser failed', {
+    console.error('[platform:invite-owner] issueAccessLink failed', {
       tenantId,
       email: normalizedEmail,
       error: errMsg,
     })
-    if (errMsg === ENSURE_RATE_LIMIT) {
-      return { success: false, error: 'Supabase limitó el envío de emails temporalmente. Esperá unos minutos.' }
+    if (errMsg === ACCESS_LINK_RATE_LIMIT) {
+      return { success: false, error: 'Supabase limitó la generación de accesos temporalmente. Esperá unos minutos.' }
     }
-    if (errMsg === ENSURE_REDIRECT_INVALID) {
+    if (errMsg === ACCESS_LINK_REDIRECT_INVALID) {
       return { success: false, error: 'La URL de redirección de Auth no está habilitada en Supabase. Revisá Authentication → URL Configuration → Redirect URLs.' }
     }
     return { success: false, error: 'Error al generar la invitación. Intentá de nuevo.' }
   }
 
-  if (!authUserId) {
-    return { success: false, error: 'No se pudo obtener el ID del usuario de Supabase Auth.' }
-  }
+  const authUserId = link.userId
+  const isNewUser  = link.isNewUser
 
   // ── Step 2.5: Guard against overwriting a user who belongs to another tenant ──
   const { data: existingAnyTenant } = await admin
@@ -554,6 +517,8 @@ export async function invitePrimaryTenantOwnerAction(tenantId: string): Promise<
   }
 
   // ── Step 4: Mark owner invited on tenant ─────────────────────────────────
+  // Semántica conservada: marca que la invitación se GENERÓ, no que el email
+  // se entregó. Por eso va antes del envío y no depende de su resultado.
   try {
     await repo.markOwnerInvited(tenantId, ctx.userId)
   } catch (markErr) {
@@ -564,26 +529,33 @@ export async function invitePrimaryTenantOwnerAction(tenantId: string): Promise<
     })
   }
 
+  // ── Step 5: recién ahora, el email ───────────────────────────────────────
+  const envio = await sendAccessEmail({
+    to: normalizedEmail, role: 'owner', kind: link.kind, accessUrl: link.url,
+    businessName: tenant.name, recipientName: tenant.primary_owner_name,
+  })
+
   revalidatePath(`${TENANTS_PATH}/${tenantId}`)
 
   console.log('[platform:invite-owner]', {
     tenantId,
     email:                 normalizedEmail,
     authUserId,
-    emailSent,
+    kind:                  link.kind,
+    emailSent:             envio.ok,
     tenantUserCreated:     true,
     ownerInvitedAtUpdated: true,
   })
 
-  if (!emailSent) {
-    const reason = lastErrorMessage ? ` (motivo: ${lastErrorMessage})` : ''
+  if (!envio.ok) {
     return {
       success: true,
-      data:    { inviteLink },
-      warning: inviteLink
-        ? `El owner fue registrado, pero no se pudo enviar el email automáticamente${reason}. Copiá el link de invitación y envíaselo por otro medio.`
-        : `El owner fue registrado, pero no se pudo enviar el email ni generar un link de invitación${reason}. Intentá de nuevo en unos minutos.`,
+      warning: 'El owner fue registrado, pero no se pudo enviar el email automáticamente. Revisá la configuración de Resend (RESEND_API_KEY y dominio verificado) y reenviá la invitación.',
     }
+  }
+
+  if (link.kind === 'recovery') {
+    return { success: true, warning: 'El owner ya había confirmado su cuenta anteriormente — se le envió un email de acceso, no una invitación nueva.' }
   }
 
   return { success: true }
@@ -612,9 +584,10 @@ export async function createSellerAction(input: unknown): Promise<ActionResult<{
   const normalizedEmail = email.toLowerCase().trim()
   const admin           = createAdminClient()
 
-  let redirectTo: string
+  // Se valida la configuración temprano para fallar con un mensaje útil antes
+  // de tocar la base; la URL en sí la arma issueAccessLink.
   try {
-    redirectTo = getAuthRedirectTo()
+    getAuthRedirectTo()
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'Error de configuración del servidor.' }
   }
@@ -633,76 +606,41 @@ export async function createSellerAction(input: unknown): Promise<ActionResult<{
     if (existingPU.active) {
       return { success: false, error: 'Ya existe un seller activo con este email.' }
     }
-    // Inactive seller: reactivate and resend invite (fire-and-forget on email error)
+    // Seller inactivo: se reactiva y se le reenvía el acceso.
     await admin
       .from('platform_users')
       .update({ active: true, name, updated_at: new Date().toISOString() })
       .eq('id', existingPU.id)
     await admin.auth.admin.updateUserById(existingPU.id, { ban_duration: 'none' }).catch(() => {})
-    await admin.auth.admin.inviteUserByEmail(normalizedEmail, { redirectTo }).catch(() => {})
-    console.log('[platform:create-seller] seller reactivated', { email: normalizedEmail, authUserId: existingPU.id })
+
+    // El email va DESPUÉS de reactivar la fila: si el envío falla, el seller
+    // ya quedó utilizable y el reenvío manual alcanza.
+    const reenvio = await issueAndSendSellerAccess(normalizedEmail, name)
+    console.log('[platform:create-seller] seller reactivated', {
+      email: normalizedEmail, authUserId: existingPU.id, emailSent: reenvio.emailSent,
+    })
     revalidatePath(SELLERS_PATH)
-    return { success: true, data: { id: existingPU.id } }
+    return reenvio.emailSent
+      ? { success: true, data: { id: existingPU.id } }
+      : { success: true, data: { id: existingPU.id }, warning: SELLER_EMAIL_WARNING }
   }
 
-  // ── Step 2: Invite via Supabase Auth → get auth user ID ──────────────────
-  // Primary: inviteUserByEmail (creates user + sends email).
-  // Fallback: generateLink (gets user ID without sending email — used when the
-  //           user already exists in auth.users from a previous attempt).
-  let authUserId: string | null = null
-  let emailSent = false
-
-  const { data: inviteData, error: inviteError } = await admin.auth.admin.inviteUserByEmail(
-    normalizedEmail,
-    { redirectTo },
-  )
-
-  if (!inviteError && inviteData?.user?.id) {
-    authUserId = inviteData.user.id
-    emailSent  = true
-  } else {
-    // Log full error — auth errors often have non-enumerable properties,
-    // so we explicitly read every known field plus all own property names.
-    const errDetail = serializeAuthError(inviteError)
-    console.warn('[platform:create-seller] inviteUserByEmail failed, falling back to generateLink', {
-      email: normalizedEmail,
-      error: errDetail,
-    })
-
-    const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
-      type:    'invite',
-      email:   normalizedEmail,
-      options: { redirectTo },
-    })
-
-    if (!linkError && linkData?.user?.id) {
-      authUserId = linkData.user.id
-      // emailSent remains false — generateLink does NOT send an email
-
-      // Dev-only: log local_confirm_link for manual testing (never in production)
-      if (process.env.NODE_ENV !== 'production' && linkData.properties?.hashed_token) {
-        const localConfirmLink = `${new URL(redirectTo).origin}/auth/confirm?token_hash=${linkData.properties.hashed_token}&type=invite`
-        console.log('[platform:create-seller] [DEV] local_confirm_link (no email sent):', localConfirmLink)
-      }
-    } else {
-      console.error('[platform:create-seller] both invite and generateLink failed', {
-        email:       normalizedEmail,
-        inviteError: serializeAuthError(inviteError),
-        linkError:   serializeAuthError(linkError),
-      })
-      if (
-        inviteError?.message?.toLowerCase().includes('rate limit') ||
-        inviteError?.code === 'over_email_send_rate_limit' ||
-        inviteError?.code === 'over_request_rate_limit'
-      ) {
-        return { success: false, error: 'Supabase limitó el envío de emails. Esperá unos minutos.' }
-      }
-      return { success: false, error: 'Error al enviar la invitación al seller. Intentá de nuevo.' }
+  // ── Step 2: emitir el link de acceso (NO envía email) ─────────────────────
+  // generateLink acuña el token y crea el usuario de Auth si no existe; el
+  // email lo arma ReservaNex y lo entrega Resend, después de persistir.
+  let link: AccessLink
+  try {
+    link = await issueAccessLink(normalizedEmail, { allowRecoveryForConfirmed: true })
+  } catch (err) {
+    const code = err instanceof Error ? err.message : ''
+    console.error('[platform:create-seller] issueAccessLink failed', { email: normalizedEmail, code })
+    if (code === ACCESS_LINK_RATE_LIMIT) {
+      return { success: false, error: 'Supabase limitó la generación de accesos. Esperá unos minutos.' }
     }
-  }
-
-  if (!authUserId) {
-    return { success: false, error: 'No se pudo obtener el ID del usuario de Supabase Auth.' }
+    if (code === ACCESS_LINK_REDIRECT_INVALID) {
+      return { success: false, error: 'La URL de redirección de Auth no está habilitada en Supabase. Revisá Authentication → URL Configuration → Redirect URLs.' }
+    }
+    return { success: false, error: 'Error al generar el acceso del seller. Intentá de nuevo.' }
   }
 
   // ── Step 3: Upsert platform_users with auth user ID ───────────────────────
@@ -711,7 +649,7 @@ export async function createSellerAction(input: unknown): Promise<ActionResult<{
   const { data: pu, error: puError } = await admin
     .from('platform_users')
     .upsert(
-      { id: authUserId, name, email: normalizedEmail, role: 'seller' as const, active: true },
+      { id: link.userId, name, email: normalizedEmail, role: 'seller' as const, active: true },
       { onConflict: 'id' },
     )
     .select()
@@ -720,31 +658,60 @@ export async function createSellerAction(input: unknown): Promise<ActionResult<{
   if (puError || !pu) {
     console.error('[platform:create-seller] platform_users upsert failed', {
       email:        normalizedEmail,
-      authUserId,
+      authUserId:   link.userId,
       errorCode:    puError?.code,
       errorMessage: puError?.message,
     })
     return { success: false, error: 'Error al registrar el seller en la base de datos. Intentá de nuevo.' }
   }
 
+  // ── Step 4: recién ahora, el email ────────────────────────────────────────
+  const envio = await sendAccessEmail({
+    to: normalizedEmail, role: 'seller', kind: link.kind, accessUrl: link.url, recipientName: name,
+  })
+
   console.log('[platform:create-seller] seller created', {
     email:     normalizedEmail,
-    authUserId,
-    emailSent,
+    authUserId: link.userId,
+    kind:      link.kind,
+    emailSent: envio.ok,
   })
 
   revalidatePath(SELLERS_PATH)
   revalidatePath(PLATFORM_PATH)
 
-  if (!emailSent) {
-    return {
-      success: true,
-      data:    { id: pu.id },
-      warning: 'El seller fue creado, pero no se pudo enviar el email de invitación automáticamente. Revisá la configuración de SMTP en Supabase, o enviá el link manualmente usando el script dev:invite-link.',
-    }
+  if (!envio.ok) {
+    return { success: true, data: { id: pu.id }, warning: SELLER_EMAIL_WARNING }
   }
 
   return { success: true, data: { id: pu.id } }
+}
+
+const SELLER_EMAIL_WARNING =
+  'El seller quedó creado, pero no se pudo enviar el email de acceso. Revisá la configuración de Resend ' +
+  '(RESEND_API_KEY y dominio verificado) y reenviá la invitación desde el listado.'
+
+/**
+ * Emite el acceso y manda el email del seller. Se usa en los caminos donde la
+ * fila de platform_users YA existe (reactivación y reenvío), así que el orden
+ * persistir-antes-de-enviar ya está garantizado por quien llama.
+ */
+async function issueAndSendSellerAccess(
+  email: string,
+  name?: string | null,
+): Promise<{ emailSent: boolean; kind?: AccessLink['kind'] }> {
+  try {
+    const link = await issueAccessLink(email, { allowRecoveryForConfirmed: true })
+    const sent = await sendAccessEmail({
+      to: email, role: 'seller', kind: link.kind, accessUrl: link.url, recipientName: name ?? null,
+    })
+    return { emailSent: sent.ok, kind: link.kind }
+  } catch (err) {
+    console.error('[platform:seller-access] no se pudo emitir el acceso', {
+      email, code: err instanceof Error ? err.message : String(err),
+    })
+    return { emailSent: false }
+  }
 }
 
 // ─── Resend seller invite (SA only) ──────────────────────────────────────────
@@ -766,41 +733,40 @@ export async function resendSellerInviteAction(sellerId: string): Promise<Action
 
   const normalizedEmail = seller.email.toLowerCase().trim()
 
-  let redirectTo: string
+  // El seller ya existe en platform_users, así que acá no hay nada que
+  // persistir antes: se emite el acceso y se manda el email de ReservaNex.
+  // Si la cuenta ya está confirmada, issueAccessLink devuelve kind 'recovery'
+  // y el email cambia de copy — nunca dice "te invitaron" a quien ya entró.
+  let link: AccessLink
   try {
-    redirectTo = getAuthRedirectTo()
+    link = await issueAccessLink(normalizedEmail, { allowRecoveryForConfirmed: true })
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : 'Error de configuración del servidor.' }
-  }
-
-  try {
-    const result = await ensureInvitedUser(normalizedEmail, redirectTo)
-
-    console.log('[platform:resend-seller]', {
-      sellerId,
-      email:  normalizedEmail,
-      mode:   result.status,
-    })
-
-    revalidatePath(SELLERS_PATH)
-
-    if (result.status === 'email_not_sent') {
-      return {
-        success: true,
-        warning: 'No se pudo enviar el email automáticamente. El seller puede solicitar acceso desde el login.',
-      }
+    const code = err instanceof Error ? err.message : ''
+    console.error('[platform:resend-seller] issueAccessLink failed', { sellerId, code })
+    if (code === ACCESS_LINK_RATE_LIMIT) {
+      return { success: false, error: 'Supabase limitó la generación de accesos temporalmente. Esperá unos minutos.' }
     }
-    return { success: true }
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : ''
-    if (errMsg === ENSURE_RATE_LIMIT) {
-      return { success: false, error: 'Supabase limitó el envío de emails temporalmente. Esperá unos minutos.' }
-    }
-    if (errMsg === ENSURE_REDIRECT_INVALID) {
+    if (code === ACCESS_LINK_REDIRECT_INVALID) {
       return { success: false, error: 'La URL de redirección de Auth no está habilitada en Supabase.' }
     }
     return { success: false, error: 'Error al reenviar la invitación. Intentá de nuevo.' }
   }
+
+  const envio = await sendAccessEmail({
+    to: normalizedEmail, role: 'seller', kind: link.kind, accessUrl: link.url, recipientName: seller.name,
+  })
+
+  console.log('[platform:resend-seller]', { sellerId, email: normalizedEmail, kind: link.kind, emailSent: envio.ok })
+
+  revalidatePath(SELLERS_PATH)
+
+  if (!envio.ok) {
+    return {
+      success: true,
+      warning: 'No se pudo enviar el email automáticamente. Revisá la configuración de Resend; el seller también puede pedir acceso desde el login.',
+    }
+  }
+  return { success: true }
 }
 
 // ─── Toggle seller active (SA only) ──────────────────────────────────────────
