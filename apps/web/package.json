@@ -33,7 +33,9 @@
     "validate:food-orders": "tsx scripts/validate-food-orders.ts",
     "validate:orders": "tsx scripts/validate-orders.ts",
     "fixture:menu-demo": "tsx scripts/prepare-menu-demo-fixture.ts",
-    "validate:tenant-kinds": "tsx scripts/validate-tenant-kinds.ts"
+    "validate:tenant-kinds": "tsx scripts/validate-tenant-kinds.ts",
+    "validate:human-attention": "tsx scripts/validate-human-attention.ts",
+    "preview:attention-email": "tsx scripts/preview-human-attention-email.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
