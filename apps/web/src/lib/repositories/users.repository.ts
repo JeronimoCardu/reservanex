@@ -2,14 +2,15 @@ import type { TenantUserRow } from '@orderflow/types'
 import type { CreateTenantUserInput, UpdateTenantUserInput } from '@orderflow/validators'
 import { createClient } from '@orderflow/supabase/server'
 import { createAdminClient } from '@orderflow/supabase/admin'
-import {
-  ensureInvitedUser,
-  ENSURE_RATE_LIMIT,
-  ENSURE_REDIRECT_INVALID,
-  ENSURE_CONFIRMED_OTHER,
-} from '@/lib/auth/ensure-invited-user'
 import type { EnsureInvitedStatus } from '@/lib/auth/ensure-invited-user'
-import { getAuthRedirectTo } from '@/lib/site-url'
+import {
+  issueAccessLink,
+  ACCESS_LINK_RATE_LIMIT,
+  ACCESS_LINK_REDIRECT_INVALID,
+  ACCESS_LINK_CONFIRMED_OTHER,
+  type AccessLink,
+} from '@/lib/auth/issue-access-link'
+import { sendAccessEmail } from '@/lib/auth/send-access-email'
 
 export type TenantUserWithWorkspaceIds = TenantUserRow & {
   workspaceIds: string[]
@@ -35,12 +36,24 @@ function throwIfOwnerUniqueViolation(error: { code?: string; message?: string })
   }
 }
 
-// Maps ensureInvitedUser sentinels to the legacy sentinels the action layer expects.
-function remapEnsureError(msg: string): string | null {
-  if (msg === ENSURE_RATE_LIMIT)       return INVITE_RATE_LIMIT
-  if (msg === ENSURE_REDIRECT_INVALID) return INVITE_REDIRECT_URL_INVALID
-  if (msg === ENSURE_CONFIRMED_OTHER)  return AUTH_USER_CONFIRMED_NO_TENANT
+// Sentinelas del emisor de accesos → los sentinelas históricos que la capa de
+// actions ya interpreta, para que sus mensajes al usuario no cambien.
+function remapAccessLinkError(msg: string): string | null {
+  if (msg === ACCESS_LINK_RATE_LIMIT)       return INVITE_RATE_LIMIT
+  if (msg === ACCESS_LINK_REDIRECT_INVALID) return INVITE_REDIRECT_URL_INVALID
+  if (msg === ACCESS_LINK_CONFIRMED_OTHER)  return AUTH_USER_CONFIRMED_NO_TENANT
   return null
+}
+
+/** El nombre del negocio para el email. Si falla, el copy tiene su variante. */
+async function tenantDisplayName(tenantId: string): Promise<string | null> {
+  try {
+    const admin = createAdminClient()
+    const { data } = await admin.from('tenants').select('name').eq('id', tenantId).maybeSingle()
+    return data?.name ?? null
+  } catch {
+    return null
+  }
 }
 
 // ─── Repository functions ─────────────────────────────────────────────────────
@@ -204,28 +217,29 @@ export async function createTenantUser(
     throw new Error(existingInTenant.active ? ALREADY_IN_TENANT : ALREADY_IN_TENANT_INACTIVE)
   }
 
-  const redirectTo = getAuthRedirectTo()
-
-  // ensureInvitedUser with sendRecoveryToConfirmed=false: confirmed users from
-  // other contexts are blocked (throws ENSURE_CONFIRMED_OTHER → AUTH_USER_CONFIRMED_NO_TENANT).
-  let ensureResult: Awaited<ReturnType<typeof ensureInvitedUser>>
+  // Atención humana V2 / Invitaciones V2 — el acceso se emite SIN que Supabase
+  // mande nada: el email lo arma ReservaNex y lo entrega Resend, más abajo,
+  // recién cuando la fila de tenant_users ya existe.
+  //
+  // allowRecoveryForConfirmed: false conserva EXACTAMENTE la semántica previa
+  // del alta: un email ya confirmado en otro contexto se bloquea, no se degrada
+  // en silencio a un recovery.
+  let link: AccessLink
   try {
-    ensureResult = await ensureInvitedUser(normalizedEmail, redirectTo, {
-      sendRecoveryToConfirmed: false,
-    })
+    link = await issueAccessLink(normalizedEmail, { allowRecoveryForConfirmed: false })
   } catch (err) {
     const msg    = err instanceof Error ? err.message : ''
-    const mapped = remapEnsureError(msg)
+    const mapped = remapAccessLinkError(msg)
     if (mapped) throw new Error(mapped)
-    console.error('[auth:invite:create] ensureInvitedUser failed', {
+    console.error('[auth:invite:create] issueAccessLink failed', {
       email: normalizedEmail,
       tenantId,
       error: msg,
     })
-    throw new Error(msg || 'Error al enviar la invitación')
+    throw new Error(msg || 'Error al generar el acceso')
   }
 
-  const { authUserId, isNewUser } = ensureResult
+  const { userId: authUserId, isNewUser } = link
 
   // If a previous invite attempt already created the tenant_users record, return it.
   const { data: existingById } = await supabase
@@ -274,6 +288,30 @@ export async function createTenantUser(
       if (assignError) throw new Error(assignError.message)
     }
 
+    // El email va al final, con el estado interno ya persistido: si sale antes
+    // y el insert falla después, el destinatario recibe un acceso a una cuenta
+    // que ReservaNex no terminó de preparar.
+    //
+    // El rol del copy es el REAL (input.role: owner | receptionist), no una
+    // suposición: este alta crea los dos.
+    //
+    // Un fallo de envío NO deshace el alta — el usuario quedó creado y el
+    // reenvío existe para eso. Se registra y sigue.
+    const businessName = await tenantDisplayName(tenantId)
+    const envio = await sendAccessEmail({
+      to:            normalizedEmail,
+      role:          input.role,
+      kind:          link.kind,
+      accessUrl:     link.url,
+      businessName,
+      recipientName: input.name,
+    })
+    if (!envio.ok) {
+      console.error('[auth:invite:create] el usuario quedó creado pero el email no salió', {
+        email: normalizedEmail, tenantId, role: input.role, reason: envio.reason,
+      })
+    }
+
     return data
   } catch (err) {
     // Only roll back by deleting the auth user when WE created it in this request.
@@ -300,7 +338,7 @@ export async function resendUserAccess(
 
   const { data: tu } = await supabase
     .from('tenant_users')
-    .select('id, email, active')
+    .select('id, email, active, role, name')
     .eq('id', userId)
     .eq('tenant_id', tenantId)
     .maybeSingle()
@@ -319,34 +357,41 @@ export async function resendUserAccess(
     throw new Error('No se encontró el usuario en auth.')
   }
 
-  const email      = authData.user.email ?? tu.email
-  const redirectTo = getAuthRedirectTo()
+  const email = authData.user.email ?? tu.email
 
+  // El reenvío SÍ puede terminar en recovery, como hasta ahora: si la cuenta
+  // ya está confirmada, el email cambia de copy y el link lleva al flujo de
+  // contraseña nueva. Nunca se le dice "te invitaron" a alguien que ya entró.
+  let link: AccessLink
   try {
-    const result = await ensureInvitedUser(email, redirectTo)
-
-    console.log('[auth:resend-access]', {
-      userId,
-      tenantId,
-      email,
-      mode: result.status,
-    })
-
-    return { mode: result.status }
+    link = await issueAccessLink(email, { allowRecoveryForConfirmed: true })
   } catch (err) {
     const msg    = err instanceof Error ? err.message : ''
-    const mapped = remapEnsureError(msg)
-    if (mapped) {
-      console.error('[auth:resend-access] ensureInvitedUser failed', {
-        userId,
-        tenantId,
-        email,
-        error: msg,
-      })
-      throw new Error(mapped)
-    }
+    const mapped = remapAccessLinkError(msg)
+    console.error('[auth:resend-access] issueAccessLink failed', { userId, tenantId, email, error: msg })
+    if (mapped) throw new Error(mapped)
     throw err
   }
+
+  const businessName = await tenantDisplayName(tenantId)
+  const envio = await sendAccessEmail({
+    to:            email,
+    role:          tu.role,
+    kind:          link.kind,
+    accessUrl:     link.url,
+    businessName,
+    recipientName: tu.name,
+  })
+
+  // Se conserva el contrato que la action ya interpreta: 'email_not_sent'
+  // dispara el aviso de "no se pudo enviar automáticamente".
+  const mode: EnsureInvitedStatus = !envio.ok
+    ? 'email_not_sent'
+    : link.kind === 'recovery' ? 'recovery_sent' : 'invited'
+
+  console.log('[auth:resend-access]', { userId, tenantId, email, kind: link.kind, mode })
+
+  return { mode }
 }
 
 export async function updateTenantUser(
