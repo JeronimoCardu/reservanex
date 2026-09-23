@@ -35,7 +35,9 @@
     "fixture:menu-demo": "tsx scripts/prepare-menu-demo-fixture.ts",
     "validate:tenant-kinds": "tsx scripts/validate-tenant-kinds.ts",
     "validate:human-attention": "tsx scripts/validate-human-attention.ts",
-    "preview:attention-email": "tsx scripts/preview-human-attention-email.ts"
+    "preview:attention-email": "tsx scripts/preview-human-attention-email.ts",
+    "preview:invitation-email": "tsx scripts/preview-invitation-email.ts",
+    "validate:invitations": "tsx scripts/validate-invitations.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
