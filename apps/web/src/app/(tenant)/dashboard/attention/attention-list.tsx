@@ -25,9 +25,15 @@ import { cn } from '@/lib/utils'
 interface AttentionListProps {
   items:         HumanAttentionRow[]
   currentUserId: string
+  /**
+   * Permisos V2 — "Atender clientes". Sin esto la card se ve completa y el
+   * botón de WhatsApp funciona: mirar quién espera y llamarlo es el trabajo.
+   * Lo que desaparece es cerrar la atención, que reactiva la IA.
+   */
+  canAttend:     boolean
 }
 
-export function AttentionList({ items, currentUserId }: AttentionListProps) {
+export function AttentionList({ items, currentUserId, canAttend }: AttentionListProps) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [busyId, setBusyId]        = useState<string | null>(null)
@@ -145,15 +151,17 @@ export function AttentionList({ items, currentUserId }: AttentionListProps) {
                     Sin teléfono
                   </Button>
                 )}
-                <Button
-                  variant="outline"
-                  className={cn('w-full sm:w-auto', busy && 'opacity-70')}
-                  disabled={busy}
-                  onClick={() => markAttended(item.id)}
-                >
-                  <CheckIcon className="h-4 w-4" />
-                  {busy ? 'Marcando…' : 'Marcar como atendido'}
-                </Button>
+                {canAttend && (
+                  <Button
+                    variant="outline"
+                    className={cn('w-full sm:w-auto', busy && 'opacity-70')}
+                    disabled={busy}
+                    onClick={() => markAttended(item.id)}
+                  >
+                    <CheckIcon className="h-4 w-4" />
+                    {busy ? 'Marcando…' : 'Marcar como atendido'}
+                  </Button>
+                )}
               </div>
             </li>
           )

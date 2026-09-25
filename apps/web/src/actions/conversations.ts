@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireTenantContext } from '@/lib/auth/require-tenant-context'
+import { requireAttendCustomers } from '@/lib/auth/attend-customers'
 import {
   createConversationSchema,
   updateConversationSchema,
@@ -28,6 +29,11 @@ export async function createConversationAction(
 ): Promise<ActionResult<{ id: string }>> {
   const ctx = await requireTenantContext()
   if (ctx.accessMode === 'setup_operator') return { success: false, error: 'No disponible en modo setup.' }
+
+  // Permisos V2 — mutar una conversación exige Atender clientes. Sin UI hoy,
+  // pero sigue siendo una server action invocable.
+  const denied = requireAttendCustomers<{ id: string }>(ctx)
+  if (denied) return denied
 
   const parsed = createConversationSchema.safeParse(input)
   if (!parsed.success) {
@@ -72,6 +78,11 @@ export async function updateConversationAction(
   const ctx = await requireTenantContext()
   if (ctx.accessMode === 'setup_operator') return { success: false, error: 'No disponible en modo setup.' }
 
+  // Permisos V2 — mutar una conversación exige Atender clientes. Sin UI hoy,
+  // pero sigue siendo una server action invocable.
+  const denied = requireAttendCustomers(ctx)
+  if (denied) return denied
+
   if (ctx.role !== 'owner') {
     return { success: false, error: 'Solo los owners pueden reasignar el workspace de una conversación.' }
   }
@@ -112,9 +123,11 @@ export async function assignConversationAction(
   if (!conversation) return { success: false, error: 'Conversación no encontrada.' }
 
   if (ctx.role === 'receptionist') {
-    if (!ctx.canAssignConversations) {
-      return { success: false, error: 'No tenés permiso para asignar conversaciones.' }
-    }
+    // Permisos V2 — mismo permiso que el resto de atender, con el mismo
+    // mensaje. La restricción de abajo (sólo auto-asignarse o liberarse) es
+    // aparte: el permiso dice SI puede asignar; eso dice A QUIÉN.
+    const denied = requireAttendCustomers(ctx)
+    if (denied) return denied
 
     const isSelfAssign   = assignedUserId === ctx.userId
     const isUnassigned   = conversation.assigned_user_id === null
@@ -153,6 +166,11 @@ export async function closeConversationAction(
   const ctx = await requireTenantContext()
   if (ctx.accessMode === 'setup_operator') return { success: false, error: 'No disponible en modo setup.' }
 
+  // Permisos V2 — mutar una conversación exige Atender clientes. Sin UI hoy,
+  // pero sigue siendo una server action invocable.
+  const denied = requireAttendCustomers(ctx)
+  if (denied) return denied
+
   const conversation = await repo.getConversationById(ctx.tenantId, id)
   if (!conversation) return { success: false, error: 'Conversación no encontrada.' }
 
@@ -173,6 +191,11 @@ export async function closeConversationAction(
 export async function reopenConversationAction(id: string): Promise<ActionResult> {
   const ctx = await requireTenantContext()
   if (ctx.accessMode === 'setup_operator') return { success: false, error: 'No disponible en modo setup.' }
+
+  // Permisos V2 — mutar una conversación exige Atender clientes. Sin UI hoy,
+  // pero sigue siendo una server action invocable.
+  const denied = requireAttendCustomers(ctx)
+  if (denied) return denied
 
   const conversation = await repo.getConversationById(ctx.tenantId, id)
   if (!conversation) return { success: false, error: 'Conversación no encontrada.' }
@@ -198,6 +221,11 @@ export async function associatePropertyAction(
 ): Promise<ActionResult> {
   const ctx = await requireTenantContext()
   if (ctx.accessMode === 'setup_operator') return { success: false, error: 'No disponible en modo setup.' }
+
+  // Permisos V2 — mutar una conversación exige Atender clientes. Sin UI hoy,
+  // pero sigue siendo una server action invocable.
+  const denied = requireAttendCustomers(ctx)
+  if (denied) return denied
 
   const conversation = await repo.getConversationById(ctx.tenantId, conversationId)
   if (!conversation) return { success: false, error: 'Conversación no encontrada.' }
@@ -234,6 +262,11 @@ export async function updateConversationLeadStatusAction(
   const ctx = await requireTenantContext()
   if (ctx.accessMode === 'setup_operator') return { success: false, error: 'No disponible en modo setup.' }
 
+  // Permisos V2 — mutar una conversación exige Atender clientes. Sin UI hoy,
+  // pero sigue siendo una server action invocable.
+  const denied = requireAttendCustomers(ctx)
+  if (denied) return denied
+
   if (!VALID_LEAD_STATUSES.has(status)) {
     return { success: false, error: 'Estado de lead inválido.' }
   }
@@ -258,9 +291,9 @@ export async function setAiModeAction(
   const ctx = await requireTenantContext()
   if (ctx.accessMode === 'setup_operator') return { success: false, error: 'No disponible en modo setup.' }
 
-  if (ctx.role !== 'owner' && ctx.role !== 'receptionist') {
-    return { success: false, error: 'No tenés permiso para cambiar el modo de IA.' }
-  }
+  // Permisos V2 — apagar o encender la IA de una conversación es atender.
+  const denied = requireAttendCustomers(ctx)
+  if (denied) return denied
 
   const parsed = setAiModeSchema.safeParse(input)
   if (!parsed.success) {
@@ -286,9 +319,9 @@ export async function reactivateConversationAiAction(
   const ctx = await requireTenantContext()
   if (ctx.accessMode === 'setup_operator') return { success: false, error: 'No disponible en modo setup.' }
 
-  if (ctx.role !== 'owner' && ctx.role !== 'receptionist') {
-    return { success: false, error: 'No tenés permiso para reactivar la IA.' }
-  }
+  // Permisos V2 — reactivar la IA cierra el ciclo de atención.
+  const denied = requireAttendCustomers(ctx)
+  if (denied) return denied
 
   const conversation = await repo.getConversationById(ctx.tenantId, id)
   if (!conversation) return { success: false, error: 'Conversación no encontrada.' }
@@ -324,9 +357,10 @@ export async function markHumanAttentionAttendedAction(
   const ctx = await requireTenantContext()
   if (ctx.accessMode === 'setup_operator') return { success: false, error: 'No disponible en modo setup.' }
 
-  if (ctx.role !== 'owner' && ctx.role !== 'receptionist') {
-    return { success: false, error: 'No tenés permiso para marcar atenciones como atendidas.' }
-  }
+  // Permisos V2 — marcar como atendido reactiva la IA, resetea el contexto y
+  // cierra el ciclo. VER la bandeja no requiere permiso; cerrarla sí.
+  const denied = requireAttendCustomers<{ conversationId: string }>(ctx)
+  if (denied) return denied
 
   const conversation = await repo.getConversationById(ctx.tenantId, conversationId)
   if (!conversation) return { success: false, error: 'Atención no encontrada.' }

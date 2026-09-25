@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { requireTenantContext } from '@/lib/auth/require-tenant-context'
 import { listPendingHumanAttention } from '@/lib/repositories/conversations.repository'
+import { canAttendCustomers } from '@/lib/auth/attend-customers'
 import { AttentionList } from './attention-list'
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -31,6 +32,11 @@ export default async function AttentionPage() {
 
   const items = await listPendingHumanAttention(ctx.tenantId)
 
+  // Permisos V2 — VER la bandeja es el trabajo y no requiere permiso; CERRAR
+  // una atención reactiva la IA y sí lo requiere. El guard real está en la
+  // action y en la RLS: esto sólo evita ofrecer un botón que iba a fallar.
+  const puedeAtender = canAttendCustomers(ctx)
+
   return (
     <div className="flex h-full flex-col">
       <div className="border-b px-4 py-4 sm:px-6">
@@ -42,7 +48,7 @@ export default async function AttentionPage() {
         </p>
       </div>
 
-      <AttentionList items={items} currentUserId={ctx.userId} />
+      <AttentionList items={items} currentUserId={ctx.userId} canAttend={puedeAtender} />
     </div>
   )
 }

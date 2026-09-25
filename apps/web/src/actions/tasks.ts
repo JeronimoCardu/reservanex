@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireTenantContext } from '@/lib/auth/require-tenant-context'
+import { requireAttendCustomers } from '@/lib/auth/attend-customers'
 import {
   createTaskSchema,
   updateTaskSchema,
@@ -29,6 +30,10 @@ function assertCanModify(
 
 export async function createTaskAction(input: unknown): Promise<ActionResult<{ id: string }>> {
   const ctx = await requireTenantContext()
+
+  // Permisos V2 — las tareas son parte de atender; leerlas no exige permiso.
+  const denied = requireAttendCustomers<{ id: string }>(ctx)
+  if (denied) return denied
 
   const parsed = createTaskSchema.safeParse(input)
   if (!parsed.success) {
@@ -80,6 +85,10 @@ export async function createTaskAction(input: unknown): Promise<ActionResult<{ i
 export async function updateTaskAction(id: string, input: unknown): Promise<ActionResult> {
   const ctx = await requireTenantContext()
 
+  // Permisos V2 — editar una tarea exige Atender clientes.
+  const denied = requireAttendCustomers(ctx)
+  if (denied) return denied
+
   const task = await taskRepo.getTaskById(ctx.tenantId, id)
   if (!task) return { success: false, error: 'Tarea no encontrada.' }
 
@@ -116,6 +125,10 @@ export async function updateTaskStatusAction(
 ): Promise<ActionResult> {
   const ctx = await requireTenantContext()
 
+  // Permisos V2 — completar o reabrir exige Atender clientes.
+  const denied = requireAttendCustomers(ctx)
+  if (denied) return denied
+
   const task = await taskRepo.getTaskById(ctx.tenantId, id)
   if (!task) return { success: false, error: 'Tarea no encontrada.' }
 
@@ -141,6 +154,10 @@ export async function updateTaskStatusAction(
 
 export async function deleteTaskAction(id: string): Promise<ActionResult> {
   const ctx = await requireTenantContext()
+
+  // Permisos V2 — borrar una tarea exige Atender clientes.
+  const denied = requireAttendCustomers(ctx)
+  if (denied) return denied
 
   const task = await taskRepo.getTaskById(ctx.tenantId, id)
   if (!task) return { success: false, error: 'Tarea no encontrada.' }

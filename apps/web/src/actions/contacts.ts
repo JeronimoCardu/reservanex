@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireTenantContext } from '@/lib/auth/require-tenant-context'
+import { requireAttendCustomers } from '@/lib/auth/attend-customers'
 import {
   createContactSchema,
   updateContactSchema,
@@ -32,6 +33,10 @@ export async function createContactAction(
 ): Promise<ActionResult<{ id: string }>> {
   const ctx = await requireTenantContext()
   if (ctx.accessMode === 'setup_operator') return { success: false, error: 'No disponible en modo setup.' }
+
+  // Permisos V2 — crear un contacto es escribir PII del tenant.
+  const denied = requireAttendCustomers<{ id: string }>(ctx)
+  if (denied) return denied
 
   const raw = input as Record<string, unknown>
 
@@ -70,6 +75,10 @@ export async function updateContactAction(
 ): Promise<ActionResult> {
   const ctx = await requireTenantContext()
   if (ctx.accessMode === 'setup_operator') return { success: false, error: 'No disponible en modo setup.' }
+
+  // Permisos V2 — editar datos de contacto exige 'Atender clientes'. LEER no.
+  const denied = requireAttendCustomers(ctx)
+  if (denied) return denied
 
   const contact = await repo.getContactById(ctx.tenantId, id)
   if (!contact) return { success: false, error: 'Contacto no encontrado.' }
