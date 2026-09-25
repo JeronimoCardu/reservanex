@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react'
 import { toast } from 'sonner'
 import { ShieldCheck } from 'lucide-react'
-import type { TenantVertical } from '@orderflow/validators'
+import type { TenantVertical, FoodCapabilities } from '@orderflow/validators'
 import type { TenantUserWithWorkspaceIds } from '@/lib/repositories/users.repository'
 import {
   emptyPermissions,
@@ -33,6 +33,9 @@ interface ReceptionistPermissionsDialogProps {
   user: TenantUserWithWorkspaceIds | null
   // Fase 3E-C3A1 — el rubro del tenant. Decide qué permisos se muestran.
   vertical: TenantVertical
+  // Permisos V2 — las capacidades del local. Un permiso de un módulo apagado
+  // no se ofrece; si ya estaba concedido, se muestra marcado como inactivo.
+  capabilities: FoodCapabilities | null
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -40,6 +43,7 @@ interface ReceptionistPermissionsDialogProps {
 export function ReceptionistPermissionsDialog({
   user,
   vertical,
+  capabilities,
   open,
   onOpenChange,
 }: ReceptionistPermissionsDialogProps) {
@@ -86,7 +90,7 @@ export function ReceptionistPermissionsDialog({
     can_manage_table_reservations: user.can_manage_table_reservations,
     can_manage_menu:               user.can_manage_menu,
     can_manage_orders:             user.can_manage_orders,
-  })
+  }, capabilities)
 
   function toggle(key: keyof Permissions) {
     setPerms((p) => ({ ...p, [key]: !p[key] }))
@@ -118,13 +122,21 @@ export function ReceptionistPermissionsDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-2">
-          {campos.map(({ key, label, description }) => (
+          {campos.map(({ key, label, description, disabledByCapability }) => (
             <div key={key} className="flex items-start justify-between gap-4">
               <div className="space-y-0.5">
                 <Label htmlFor={key} className="cursor-pointer text-sm font-medium leading-none">
                   {label}
                 </Label>
                 <p className="text-xs text-muted-foreground">{description}</p>
+                {/* El permiso está concedido pero el negocio apagó esa función.
+                    Se muestra para que el owner pueda apagarlo: ocultarlo dejaría
+                    un permiso activo e invisible. */}
+                {disabledByCapability && (
+                  <p className="text-xs font-medium text-amber-700 dark:text-amber-500">
+                    Esta función está desactivada para tu negocio.
+                  </p>
+                )}
               </div>
               {/* Inline toggle — no external dependency needed */}
               <button

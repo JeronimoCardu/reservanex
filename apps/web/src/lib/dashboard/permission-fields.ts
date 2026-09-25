@@ -1,4 +1,4 @@
-import type { TenantVertical } from '@orderflow/validators'
+import type { TenantVertical, FoodCapabilities } from '@orderflow/validators'
 import { verticalsForRoute } from './module-verticals'
 
 // Fase 3E-C3A1 — qué permisos de recepcionista tiene sentido mostrarle a un owner.
@@ -64,26 +64,26 @@ export interface PermissionField {
 export const PERMISSION_FIELDS: readonly PermissionField[] = [
   {
     key:         'can_assign_conversations',
-    label:       'Asignar conversaciones',
-    description: 'Puede auto-asignarse y liberar conversaciones',
+    label:       'Atender clientes',
+    description: 'Puede gestionar atenciones humanas y actualizar datos necesarios para atender clientes.',
     module:      '/dashboard/attention',
   },
   {
     key:         'can_access_settings',
-    label:       'Acceder a Configuración',
-    description: 'Puede ver y editar la configuración del tenant',
+    label:       'Ver datos del negocio',
+    description: 'Puede consultar los datos del negocio y el estado de WhatsApp.',
     module:      '/dashboard/settings',
   },
   {
     key:         'can_create_properties',
-    label:       'Crear propiedades',
-    description: 'Puede crear y editar propiedades',
+    label:       'Gestionar propiedades',
+    description: 'Puede crear, editar, publicar y administrar propiedades.',
     module:      '/dashboard/properties',
   },
   {
     key:         'can_confirm_reservations',
-    label:       'Confirmar reservas',
-    description: 'Puede confirmar y gestionar reservas',
+    label:       'Gestionar reservas y pagos',
+    description: 'Puede gestionar reservas, pagos y recibos.',
     module:      '/dashboard/reservations',
   },
   // Fase 3E-B1 — permiso propio. Antes, quien tenía 'Confirmar reservas'
@@ -140,6 +140,14 @@ export const PERMISSION_FIELDS: readonly PermissionField[] = [
 export type SavedPermissions = Record<ReceptionistPermissionKey, boolean>
 
 /**
+ * Un permiso listo para renderizar. `disabledByCapability` es TRUE cuando el
+ * permiso está concedido pero la capacidad que lo habilita está apagada: se
+ * sigue mostrando para que el owner pueda verlo y apagarlo, marcado como
+ * inactivo.
+ */
+export type VisiblePermissionField = PermissionField & { disabledByCapability: boolean }
+
+/**
  * Todos los permisos en false.
  *
  * Se construye desde PERMISSION_FIELDS para que no pueda quedar desalineada: un
@@ -193,8 +201,53 @@ export function permissionBelongsToVertical(
 export function visiblePermissionFields(
   vertical: TenantVertical,
   saved: SavedPermissions,
-): PermissionField[] {
-  return PERMISSION_FIELDS.filter(
-    (f) => permissionBelongsToVertical(f, vertical) || saved[f.key] === true,
-  )
+  capabilities?: FoodCapabilities | null,
+): VisiblePermissionField[] {
+  return PERMISSION_FIELDS
+    .filter((f) => permissionBelongsToVertical(f, vertical) || saved[f.key] === true)
+    .filter((f) => permissionEnabledByCapabilities(f, capabilities) || saved[f.key] === true)
+    .map((f) => ({
+      ...f,
+      disabledByCapability: !permissionEnabledByCapabilities(f, capabilities),
+    }))
+}
+
+// ── Permisos V2 — capacidades del local ─────────────────────────────────────
+//
+// El rubro dice si el módulo EXISTE; la capacidad, si ESTE negocio lo tiene
+// encendido. Un restaurante sin reservas de mesa no debería ver el switch de
+// reservas de mesa: el módulo no está en su nav y la ruta da 404.
+//
+// LA REGLA ANTE UN PERMISO CONCEDIDO Y UNA CAPACIDAD APAGADA
+//
+// Se muestra igual, marcado como desactivado, y NO se toca el valor guardado.
+// Las otras dos salidas eran peores:
+//
+//   · Ocultarlo dejaría un permiso concedido e invisible — el owner no podría
+//     verlo ni apagarlo. Es el mismo problema que ya resolvía la regla de
+//     "mostrar si saved = true" para los permisos fuera de rubro.
+//   · Apagarlo solo, al desactivar la capacidad, sería una escritura silenciosa
+//     sobre los permisos de una persona, y volver a encender la capacidad NO
+//     los devolvería. Prefiere perder un click antes que decidir por el owner.
+//
+// Encender de nuevo la capacidad restaura el switch tal como estaba.
+
+/** Qué capacidad gobierna este permiso, o null si no depende de ninguna. */
+export function capabilityForPermission(
+  field: PermissionField,
+): ((caps: FoodCapabilities) => boolean) | null {
+  if (field.key === 'can_manage_table_reservations') return (c) => c.tableReservations
+  // Pedidos existe si el local toma pedidos por ALGUNA vía.
+  if (field.key === 'can_manage_orders') return (c) => c.delivery || c.takeaway
+  return null
+}
+
+export function permissionEnabledByCapabilities(
+  field: PermissionField,
+  capabilities?: FoodCapabilities | null,
+): boolean {
+  const gate = capabilityForPermission(field)
+  // Sin capacidades (tenant no gastronómico) no hay nada que apagar.
+  if (gate === null || !capabilities) return true
+  return gate(capabilities)
 }

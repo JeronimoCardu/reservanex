@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import type { TenantVertical } from '@orderflow/validators'
+import type { TenantVertical, FoodCapabilities } from '@orderflow/validators'
 import { requireTenantContext } from './require-tenant-context'
 import type { AccessMode } from './require-tenant-context'
 
@@ -14,6 +14,10 @@ export type OwnerContext = {
   // sacó de la query de checkTenantAccess() que corre en todos los caminos. Acá
   // solo se deja de descartar. Este archivo no habla con la base.
   vertical:   TenantVertical
+  // Permisos V2 — las capacidades del local, para no ofrecer permisos de
+  // módulos que este negocio tiene apagados. Mismo origen que vertical: ya
+  // estaban en el contexto, sólo se dejan de descartar.
+  capabilities: FoodCapabilities | null
 }
 
 export async function requireOwner(): Promise<OwnerContext> {
@@ -26,5 +30,6 @@ export async function requireOwner(): Promise<OwnerContext> {
     tenantId:   ctx.tenantId,
     accessMode: ctx.accessMode,
     vertical:   ctx.vertical,
+    capabilities: ctx.capabilities,
   }
 }
