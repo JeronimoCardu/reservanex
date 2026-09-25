@@ -37,7 +37,8 @@
     "validate:human-attention": "tsx scripts/validate-human-attention.ts",
     "preview:attention-email": "tsx scripts/preview-human-attention-email.ts",
     "preview:invitation-email": "tsx scripts/preview-invitation-email.ts",
-    "validate:invitations": "tsx scripts/validate-invitations.ts"
+    "validate:invitations": "tsx scripts/validate-invitations.ts",
+    "validate:permissions": "tsx scripts/validate-permissions.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
