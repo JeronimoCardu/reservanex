@@ -1,19 +1,15 @@
 import { NextResponse } from 'next/server'
 import { contactSchema } from '@/lib/validation/contact-schema'
 import { deliverContactSubmission } from '@/lib/contact'
-import { readPublicJsonBody } from '@/lib/public-post-guard'
+import { MAX_PUBLIC_POST_BODY_BYTES, readPublicJsonBody } from '@/lib/public-post-guard'
 
 export const dynamic = 'force-dynamic'
 
-// Generous for this form's fields (message caps at 2000 chars in the
-// schema). Measured in real UTF-8 bytes, checked against Content-Length first
-// and against the body actually read afterwards.
-const MAX_BODY_BYTES = 20_000
-
 export async function POST(request: Request) {
-  // Content-Type, Sec-Fetch-Site and size, all before parsing and before any
-  // email goes out. See the public-post-guard module.
-  const guarded = await readPublicJsonBody(request, MAX_BODY_BYTES)
+  // Content-Type, Sec-Fetch-Site and size (MAX_PUBLIC_POST_BODY_BYTES, real
+  // UTF-8 bytes), all before parsing and before any email goes out. See the
+  // public-post-guard module.
+  const guarded = await readPublicJsonBody(request, MAX_PUBLIC_POST_BODY_BYTES)
   if (!guarded.ok) {
     return NextResponse.json({ ok: false, reason: guarded.reason }, { status: guarded.status })
   }

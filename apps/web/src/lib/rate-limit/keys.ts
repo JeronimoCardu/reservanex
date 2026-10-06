@@ -20,9 +20,14 @@
 //
 // SECRETO
 //
-// Si falta (o es demasiado corto) NO hay fallback: se devuelve un error
-// explícito. Qué hacer con ese error — dejar pasar o cortar — lo decide el
-// adapter de la Fase 1B, por endpoint. Acá no se decide.
+// RATE_LIMIT_KEY_SECRET: al menos 32 bytes, ASCII imprimible (en producción,
+// 32 bytes aleatorios codificados en hex o base64url: `openssl rand -hex 32`).
+// Se mide en BYTES, no en caracteres. Si falta, es corto o trae caracteres
+// fuera de ASCII imprimible NO hay fallback: se devuelve un error explícito, y
+// qué hacer con él — dejar pasar o cortar — lo decide cada consumidor del
+// limiter, no este módulo. El secreto nunca se loguea ni sale de acá.
+//
+// Rotarlo cambia todas las claves: los buckets arrancan de cero. Es aceptable.
 
 import { createHmac } from 'node:crypto'
 import type { ClientIdentity } from './client-ip'
@@ -30,10 +35,20 @@ import type { FormIntentGroup, RateLimitEndpoint } from './policy'
 
 export const RATE_LIMIT_KEY_VERSION = 'rl1'
 
-/** Largo mínimo del secreto: 32 caracteres (p. ej. `openssl rand -hex 16`). */
-export const MIN_RATE_LIMIT_SECRET_LENGTH = 32
+/** Largo mínimo del secreto, en bytes. */
+export const MIN_RATE_LIMIT_SECRET_BYTES = 32
+
+// ASCII imprimible sin espacio (0x21–0x7E): cubre hex, base64 y base64url.
+const PRINTABLE_ASCII = /^[\x21-\x7e]+$/
 
 export type RateLimitScope = 'ip' | 'ip_tenant' | 'ip_endpoint' | 'ip_tenant_group'
+
+/**
+ * La forma exacta de una clave. La migración de rate_limit_buckets valida con
+ * el MISMO patrón (CHECK de la tabla y rate_limit_hit); rate-limit-sql.test.ts
+ * falla si divergen.
+ */
+export const RATE_LIMIT_KEY_PATTERN = /^rl1\.(ip|ip_tenant|ip_endpoint|ip_tenant_group)\.[A-Za-z0-9_-]{43}$/
 
 /**
  * `tenant` es la referencia estable del tenant que elija la Fase 1B (slug
@@ -45,11 +60,25 @@ export type RateLimitKeySpec =
   | { scope: 'ip_endpoint';     identity: ClientIdentity; endpoint: RateLimitEndpoint }
   | { scope: 'ip_tenant_group'; identity: ClientIdentity; tenant: string; group: FormIntentGroup }
 
-export type RateLimitKeyError = 'missing_secret' | 'weak_secret' | 'invalid_component'
+export type RateLimitKeyError = 'missing_secret' | 'weak_secret' | 'invalid_secret' | 'invalid_component'
 
 export type RateLimitKeyResult =
   | { ok: true;  key: string }
   | { ok: false; error: RateLimitKeyError }
+
+/**
+ * Valida RATE_LIMIT_KEY_SECRET. Los espacios en los bordes (un salto de línea
+ * pegado con el valor) se descartan; adentro no se admite ninguno.
+ */
+export function checkRateLimitSecret(
+  secret: string | undefined,
+): { ok: true; secret: string } | { ok: false; error: 'missing_secret' | 'weak_secret' | 'invalid_secret' } {
+  const value = secret?.trim() ?? ''
+  if (value === '') return { ok: false, error: 'missing_secret' }
+  if (!PRINTABLE_ASCII.test(value)) return { ok: false, error: 'invalid_secret' }
+  if (Buffer.byteLength(value, 'utf8') < MIN_RATE_LIMIT_SECRET_BYTES) return { ok: false, error: 'weak_secret' }
+  return { ok: true, secret: value }
+}
 
 /** Serialización inyectiva: `<bytes UTF-8>:<valor>` por componente, sin separador. */
 export function serializeKeyMaterial(components: readonly string[]): string {
@@ -73,9 +102,9 @@ function componentsFor(spec: RateLimitKeySpec): string[] {
  * la IP, el tenant, el endpoint y el grupo sólo existen dentro del HMAC.
  */
 export function buildRateLimitKey(spec: RateLimitKeySpec, secret: string | undefined): RateLimitKeyResult {
-  const key = secret?.trim() ?? ''
-  if (key === '') return { ok: false, error: 'missing_secret' }
-  if (key.length < MIN_RATE_LIMIT_SECRET_LENGTH) return { ok: false, error: 'weak_secret' }
+  const checked = checkRateLimitSecret(secret)
+  if (!checked.ok) return checked
+  const key = checked.secret
 
   const components = componentsFor(spec)
   if (components.some((c) => c === '')) return { ok: false, error: 'invalid_component' }

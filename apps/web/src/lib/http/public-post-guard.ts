@@ -28,6 +28,18 @@
 // modernos y un script no. Se rechaza únicamente 'cross-site'; su ausencia NO
 // es motivo de rechazo (curl, navegadores viejos, llamadas server-to-server).
 
+/**
+ * Tope de body para todos los POST públicos: 32 KiB, en BYTES UTF-8.
+ *
+ * El body válido más grande que arma la aplicación es un pedido de 25 líneas
+ * con todos los textos al máximo: 12 169 bytes en ASCII y 30 249 si cada
+ * carácter de texto ocupa 3 bytes (…, €) — el peor caso que permiten los
+ * `max()` de los schemas, que cuentan unidades UTF-16. 32 KiB lo cubre con
+ * margen; los tests de ruta lo miden, intent por intent. No está pensado para
+ * JSON inflado a mano con espacios o escapes.
+ */
+export const MAX_PUBLIC_POST_BODY_BYTES = 32_768
+
 export type PublicPostRejection =
   | { ok: false; status: 415; reason: 'unsupported_media_type' }
   | { ok: false; status: 403; reason: 'cross_site_request' }

@@ -30,7 +30,7 @@ describe('apps/marketing — paridad del hardening de /api/contact', () => {
 
   it('marketing importa SU copia del guard, no la de apps/web', () => {
     const ruta = leer('apps/marketing/src/app/api/contact/route.ts')
-    expect(ruta).toContain("import { readPublicJsonBody } from '@/lib/public-post-guard'")
+    expect(ruta).toMatch(/import \{[^}]*\breadPublicJsonBody\b[^}]*\} from '@\/lib\/public-post-guard'/)
     expect(ruta).not.toContain('lib/http/')
   })
 })

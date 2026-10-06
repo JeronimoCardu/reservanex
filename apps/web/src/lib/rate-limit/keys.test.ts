@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type { ClientIdentity } from './client-ip'
-import { buildRateLimitKey, MIN_RATE_LIMIT_SECRET_LENGTH, serializeKeyMaterial, type RateLimitKeySpec } from './keys'
+import {
+  buildRateLimitKey,
+  checkRateLimitSecret,
+  MIN_RATE_LIMIT_SECRET_BYTES,
+  RATE_LIMIT_KEY_PATTERN,
+  serializeKeyMaterial,
+  type RateLimitKeySpec,
+} from './keys'
 
-const SECRET       = 's'.repeat(MIN_RATE_LIMIT_SECRET_LENGTH)
-const OTHER_SECRET = 't'.repeat(MIN_RATE_LIMIT_SECRET_LENGTH)
+const SECRET       = 's'.repeat(MIN_RATE_LIMIT_SECRET_BYTES)
+const OTHER_SECRET = 't'.repeat(MIN_RATE_LIMIT_SECRET_BYTES)
 
 const IP_A: ClientIdentity = { kind: 'ip', value: '203.0.113.7' }
 const IP_B: ClientIdentity = { kind: 'ip', value: '203.0.113.8' }
@@ -85,6 +92,17 @@ describe('buildRateLimitKey — opacidad', () => {
     const k = key({ scope: 'ip_tenant', identity: IP_A, tenant: 'pizzeria-demo' })
     expect(k).toMatch(/^rl1\.ip_tenant\.[A-Za-z0-9_-]{43}$/)
   })
+
+  it('toda clave de todo scope cumple RATE_LIMIT_KEY_PATTERN (el mismo que valida SQL)', () => {
+    for (const spec of [
+      { scope: 'ip', identity: IP_A },
+      { scope: 'ip_tenant', identity: IP_A, tenant: 'pizzeria-demo' },
+      { scope: 'ip_endpoint', identity: IP_A, endpoint: 'contact' },
+      { scope: 'ip_tenant_group', identity: IP_A, tenant: 'pizzeria-demo', group: 'pedidos' },
+    ] satisfies RateLimitKeySpec[]) {
+      expect(key(spec)).toMatch(RATE_LIMIT_KEY_PATTERN)
+    }
+  })
 })
 
 describe('buildRateLimitKey — secreto', () => {
@@ -95,8 +113,32 @@ describe('buildRateLimitKey — secreto', () => {
   })
 
   it('un secreto corto → weak_secret', () => {
-    expect(buildRateLimitKey(spec, 'x'.repeat(MIN_RATE_LIMIT_SECRET_LENGTH - 1)))
+    expect(buildRateLimitKey(spec, 'x'.repeat(MIN_RATE_LIMIT_SECRET_BYTES - 1)))
       .toEqual({ ok: false, error: 'weak_secret' })
+  })
+
+  it('se mide en bytes: 32 bytes ASCII alcanzan, 31 no', () => {
+    expect(checkRateLimitSecret('a'.repeat(32))).toEqual({ ok: true, secret: 'a'.repeat(32) })
+    expect(checkRateLimitSecret('a'.repeat(31))).toEqual({ ok: false, error: 'weak_secret' })
+  })
+
+  it('formatos de producción: 32 bytes aleatorios en hex (64) o base64url (43)', () => {
+    expect(checkRateLimitSecret('0123456789abcdef'.repeat(4)).ok).toBe(true)
+    expect(checkRateLimitSecret('A'.repeat(42) + '_').ok).toBe(true)
+  })
+
+  it.each([
+    ['con un espacio adentro', `${'a'.repeat(20)} ${'a'.repeat(20)}`],
+    ['con caracteres no ASCII', 'ñ'.repeat(40)],
+    ['con un salto de línea adentro', `${'a'.repeat(20)}\n${'a'.repeat(20)}`],
+  ])('un secreto %s → invalid_secret', (_label, secret) => {
+    expect(checkRateLimitSecret(secret)).toEqual({ ok: false, error: 'invalid_secret' })
+    expect(buildRateLimitKey(spec, secret)).toEqual({ ok: false, error: 'invalid_secret' })
+  })
+
+  it('el resultado de error nunca incluye el secreto', () => {
+    const corto = 'secreto-corto-123'
+    expect(JSON.stringify(buildRateLimitKey(spec, corto))).not.toContain(corto)
   })
 
   it('los espacios alrededor del secreto no cambian la clave', () => {

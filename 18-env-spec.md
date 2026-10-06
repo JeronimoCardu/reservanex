@@ -100,7 +100,19 @@ Variables para el servidor de Next.js y el browser.
 
 Variables que solo existen en el servidor de Next.js. No tienen prefijo `NEXT_PUBLIC_`.
 
-(Estas variables ya están en la sección Frontend arriba. No hay variables adicionales exclusivas del backend Next.js que no sean las ya listadas.)
+(Estas variables ya están en la sección Frontend arriba. No hay variables adicionales exclusivas del backend Next.js que no sean las ya listadas, salvo la de rate limiting de abajo.)
+
+### Rate limiting (Fase 1B — definida, todavía no la lee ninguna ruta)
+
+```env
+# Secreto del HMAC que vuelve opacas las claves de rate limiting
+# (apps/web/src/lib/rate-limit/keys.ts). Al menos 32 bytes, ASCII imprimible:
+# 32 bytes aleatorios en hex (64 chars) o base64url (43 chars).
+#   openssl rand -hex 32
+# Si falta o no cumple, el limiter devuelve config_error — nunca usa un
+# fallback. Rotarlo reinicia todos los buckets (aceptable). Nunca se loguea.
+RATE_LIMIT_KEY_SECRET=
+```
 
 ---
 
@@ -200,6 +212,7 @@ Registrar manualmente. Ver instrucciones al final de `16-supabase-schema-v3.sql`
 | `expire-pre-reservations` | `*/15 * * * *` | Cancela pre-reservas con `expires_at < now()` |
 | `reclaim-stuck-queue-items` | `*/10 * * * *` | Resetea items de queue atascados en `processing` |
 | `purge-old-queue-items` | `0 3 * * *` | Elimina items completados/fallidos con más de 7 días |
+| `rate-limit-cleanup` | `*/30 * * * *` | Borra buckets de rate limiting vencidos hace más de 1 h. Lo programa la migración `20261006000001_rate_limit_buckets` si pg_cron está habilitado (no se registra a mano). **Pendiente de aplicar al remoto.** |
 
 ---
 

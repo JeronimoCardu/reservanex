@@ -3,10 +3,11 @@ import {
   declaredContentLength,
   isCrossSiteRequest,
   isJsonContentType,
+  MAX_PUBLIC_POST_BODY_BYTES,
   readPublicJsonBody,
 } from './public-post-guard'
 
-const MAX = 20_000
+const MAX = MAX_PUBLIC_POST_BODY_BYTES
 
 function post(body: string, headers: Record<string, string> = { 'content-type': 'application/json' }): Request {
   return new Request('http://localhost/api/x', { method: 'POST', headers, body })
@@ -56,6 +57,12 @@ describe('isCrossSiteRequest', () => {
 
   it.each([[null], ['same-origin'], ['same-site'], ['none'], ['']])('no rechaza %j', (header) => {
     expect(isCrossSiteRequest(header)).toBe(false)
+  })
+})
+
+describe('MAX_PUBLIC_POST_BODY_BYTES', () => {
+  it('es 32 KiB', () => {
+    expect(MAX_PUBLIC_POST_BODY_BYTES).toBe(32_768)
   })
 })
 
@@ -114,8 +121,8 @@ describe('readPublicJsonBody', () => {
   })
 
   it('mide bytes UTF-8, no unidades UTF-16', async () => {
-    // 10 001 'ñ' = 10 001 unidades UTF-16 pero 20 002 bytes.
-    const raw = 'ñ'.repeat(10_001)
+    // MAX/2 + 1 'ñ': menos de MAX unidades UTF-16, pero MAX + 2 bytes.
+    const raw = 'ñ'.repeat(MAX / 2 + 1)
     expect(raw.length).toBeLessThan(MAX)
     expect(Buffer.byteLength(raw, 'utf8')).toBeGreaterThan(MAX)
 
