@@ -27,6 +27,7 @@ import {
   initialFormValues,
   type FormValues,
 } from '@/lib/forms/form-state'
+import { rateLimitNoticeFor } from '@/lib/forms/rate-limit-notice'
 
 type Status = 'idle' | 'submitting' | 'success' | 'error'
 
@@ -174,6 +175,18 @@ export function DynamicForm({
         console.error('[dynamic-form] respuesta de éxito con forma inesperada')
         setStatus('error')
         setFormError('No pudimos confirmar el envío. Escribinos por WhatsApp para verificarlo.')
+        return
+      }
+
+      // 429: se decide por el status, no por el cuerpo — si lo corta el WAF de
+      // la plataforma, el cuerpo ni siquiera es nuestro JSON. Va ANTES del
+      // error estructurado para que un 429 nunca llegue al wrapper del carrito.
+      // No se resetea nada: valores, carrito e idempotencyKey quedan iguales,
+      // así que el reintento no duplica (ver lib/forms/rate-limit-notice).
+      const rateLimitNotice = rateLimitNoticeFor(res.status, res.headers.get('retry-after'), data)
+      if (rateLimitNotice) {
+        setStatus('error')
+        setFormError(rateLimitNotice)
         return
       }
 

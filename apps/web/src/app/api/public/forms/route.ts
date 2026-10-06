@@ -17,6 +17,7 @@ import {
   resolvePublicationContext,
 } from '@/lib/forms/submissions.repository'
 import { resolveFoodOrderCart, buildResolvedFoodOrderPayload } from '@/lib/forms/food-order-cart'
+import { readPublicJsonBody } from '@/lib/http/public-post-guard'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -38,21 +39,29 @@ export const dynamic = 'force-dynamic'
 // Fase 3E-C3B1 — NO se subió para el carrito. El tope de 25 líneas lo impone el
 // schema, así que un pedido legítimo en el peor caso razonable (25 líneas con
 // 300 caracteres de aclaración cada una, 1000 de observaciones y una dirección
-// al máximo) entra cómodo acá; hay un test que lo mide en vez de suponerlo.
+// al máximo) entra cómodo acá; route.test.ts lo mide en vez de suponerlo.
 // Pasarse de 25 líneas es 422 por schema, no 413 por bytes: el mensaje tiene que
 // decir cuál es la regla del producto, no cuánto pesó el request.
+//
+// Rate limiting Fase 1A — el límite ahora son BYTES UTF-8 reales (antes era
+// raw.length, que cuenta unidades UTF-16 y dejaba pasar hasta ~60 KB). Medido:
+// ese peor caso pesa 12 069 bytes en ASCII. Sólo un pedido con TODOS los
+// caracteres de todos los campos de texto multibyte lo supera (20 989 bytes con
+// ñ/á en cada carácter), y eso no es un pedido real.
 const MAX_BODY_BYTES = 20_000
 
 export async function POST(req: NextRequest) {
   try {
-    const raw = await req.text()
-    if (raw.length > MAX_BODY_BYTES) {
-      return NextResponse.json({ ok: false, reason: 'payload_too_large' }, { status: 413 })
+    // Content-Type, Sec-Fetch-Site y tamaño: todo antes de parsear y antes de
+    // tocar la base. Ver lib/http/public-post-guard.ts.
+    const guarded = await readPublicJsonBody(req, MAX_BODY_BYTES)
+    if (!guarded.ok) {
+      return NextResponse.json({ ok: false, reason: guarded.reason }, { status: guarded.status })
     }
 
     let body: unknown
     try {
-      body = JSON.parse(raw)
+      body = JSON.parse(guarded.raw)
     } catch {
       return NextResponse.json({ ok: false, reason: 'invalid_json' }, { status: 400 })
     }

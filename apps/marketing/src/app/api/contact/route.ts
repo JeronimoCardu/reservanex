@@ -1,34 +1,26 @@
 import { NextResponse } from 'next/server'
 import { contactSchema } from '@/lib/validation/contact-schema'
 import { deliverContactSubmission } from '@/lib/contact'
+import { readPublicJsonBody } from '@/lib/public-post-guard'
 
 export const dynamic = 'force-dynamic'
 
 // Generous for this form's fields (message caps at 2000 chars in the
-// schema); guards against a spoofed/missing Content-Length header hiding an
-// oversized body from the platform's own limits.
+// schema). Measured in real UTF-8 bytes, checked against Content-Length first
+// and against the body actually read afterwards.
 const MAX_BODY_BYTES = 20_000
 
 export async function POST(request: Request) {
-  const contentLength = Number(request.headers.get('content-length') ?? 0)
-  if (contentLength > MAX_BODY_BYTES) {
-    return NextResponse.json({ ok: false, reason: 'payload_too_large' }, { status: 413 })
-  }
-
-  let rawBody: string
-  try {
-    rawBody = await request.text()
-  } catch {
-    return NextResponse.json({ ok: false, reason: 'invalid_body' }, { status: 400 })
-  }
-
-  if (rawBody.length > MAX_BODY_BYTES) {
-    return NextResponse.json({ ok: false, reason: 'payload_too_large' }, { status: 413 })
+  // Content-Type, Sec-Fetch-Site and size, all before parsing and before any
+  // email goes out. See the public-post-guard module.
+  const guarded = await readPublicJsonBody(request, MAX_BODY_BYTES)
+  if (!guarded.ok) {
+    return NextResponse.json({ ok: false, reason: guarded.reason }, { status: guarded.status })
   }
 
   let body: unknown
   try {
-    body = JSON.parse(rawBody)
+    body = JSON.parse(guarded.raw)
   } catch {
     return NextResponse.json({ ok: false, reason: 'invalid_body' }, { status: 400 })
   }

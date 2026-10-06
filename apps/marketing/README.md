@@ -50,8 +50,11 @@ localized per language and built in `src/lib/whatsapp.ts`.
 
 ### Contact form delivery
 
-The form posts to `src/app/api/contact/route.ts`, which rejects bodies over
-~20KB, validates with the same Zod schema used client-side
+The form posts to `src/app/api/contact/route.ts`, which only accepts
+`application/json` (415 otherwise), rejects browser requests marked
+`Sec-Fetch-Site: cross-site` (403) and bodies over 20,000 UTF-8 bytes (413) —
+see `src/lib/public-post-guard.ts`, an identical copy of the `apps/web`
+module — then validates with the same Zod schema used client-side
 (`src/lib/validation/contact-schema.ts`) plus a honeypot field, then tries,
 in order:
 
