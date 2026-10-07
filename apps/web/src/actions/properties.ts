@@ -9,6 +9,14 @@ import { createClient } from '@orderflow/supabase/server'
 import type { ActionResult } from '@/lib/action-result'
 import type { PropertyVideoRow } from '@orderflow/types'
 import { tenantLimitMessage } from '@/lib/tenant-limits'
+import {
+  LEGACY_VIDEO_UPLOAD_MAX_BYTES,
+  MAX_PROPERTY_VIDEOS,
+  MAX_VIDEO_DURATION_SECONDS,
+  VIDEO_LIMIT_MESSAGES,
+  isAllowedVideoMimeType,
+  videoExtensionForMime,
+} from '@/lib/property-videos/limits'
 
 const LIST_PATH   = '/dashboard/properties'
 const DETAIL_PATH = (id: string) => `/dashboard/properties/${id}`
@@ -347,10 +355,10 @@ export async function changePropertyCommercialStatusAction(
 }
 
 // ── Videos ────────────────────────────────────────────────────────────────────
-
-const ALLOWED_VIDEO_MIME = ['video/mp4', 'video/webm', 'video/quicktime']
-const MAX_VIDEO_BYTES    = 80 * 1024 * 1024 // 80 MB
-const MAX_VIDEOS_PER_PROPERTY = 2
+// Límites: @/lib/property-videos/limits (fuente canónica). Esta Server Action
+// sigue siendo la subida productiva hasta la Fase 2B/2C y su archivo viaja en
+// el body de un request a Vercel (tope 4,5 MB): por eso valida contra el
+// límite TEMPORAL de transporte legacy (4 MiB), no contra los 50 MiB finales.
 
 export async function getPropertyVideosAction(
   propertyId: string,
@@ -415,17 +423,20 @@ export async function uploadPropertyVideoAction(
   }
   const file = raw as File
 
-  if (!ALLOWED_VIDEO_MIME.includes(file.type)) {
-    return { success: false, error: 'Solo se admiten videos MP4, WebM o MOV.' }
+  const mimeType = file.type
+  if (!isAllowedVideoMimeType(mimeType)) {
+    return { success: false, error: VIDEO_LIMIT_MESSAGES.mimeNotAllowed }
   }
-  if (file.size > MAX_VIDEO_BYTES) {
-    return { success: false, error: 'El video no puede superar 80 MB.' }
+  // En Vercel, un body de más de 4,5 MB ni siquiera llega acá (413); entre
+  // 4 MiB y ese tope, el rechazo es explícito.
+  if (file.size > LEGACY_VIDEO_UPLOAD_MAX_BYTES) {
+    return { success: false, error: VIDEO_LIMIT_MESSAGES.legacyTooLarge }
   }
 
   const rawDuration = formData.get('duration_seconds')
   const durationSeconds = rawDuration ? parseInt(String(rawDuration), 10) : null
-  if (durationSeconds != null && durationSeconds > 60) {
-    return { success: false, error: 'El video no puede superar 60 segundos.' }
+  if (durationSeconds != null && durationSeconds > MAX_VIDEO_DURATION_SECONDS) {
+    return { success: false, error: VIDEO_LIMIT_MESSAGES.tooLong }
   }
 
   const title = formData.get('title')
@@ -438,14 +449,11 @@ export async function uploadPropertyVideoAction(
     .eq('property_id', propertyId)
     .eq('tenant_id', ctx.tenantId)
 
-  if ((count ?? 0) >= MAX_VIDEOS_PER_PROPERTY) {
-    return { success: false, error: `Esta propiedad ya tiene ${MAX_VIDEOS_PER_PROPERTY} videos (máximo permitido).` }
+  if ((count ?? 0) >= MAX_PROPERTY_VIDEOS) {
+    return { success: false, error: `Esta propiedad ya tiene ${MAX_PROPERTY_VIDEOS} videos (máximo permitido).` }
   }
 
-  const ext  = file.type === 'video/mp4'      ? 'mp4'
-             : file.type === 'video/webm'     ? 'webm'
-             : 'mov'
-  const path = `${ctx.tenantId}/${randomUUID()}.${ext}`
+  const path = `${ctx.tenantId}/${randomUUID()}.${videoExtensionForMime(mimeType)}`
 
   const { error: uploadError } = await supabase.storage
     .from('property-videos')

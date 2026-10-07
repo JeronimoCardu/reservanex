@@ -13,6 +13,7 @@ vi.mock('@orderflow/supabase/server', () => ({ createClient: vi.fn() }))
 import { requireTenantContext } from '@/lib/auth/require-tenant-context'
 import { createClient } from '@orderflow/supabase/server'
 import { uploadPropertyVideoAction } from './properties'
+import { LEGACY_VIDEO_UPLOAD_MAX_BYTES, MAX_VIDEO_SIZE_BYTES } from '@/lib/property-videos/limits'
 
 const TENANT_A = 'aaaaaaaa-0000-4000-8000-00000000000a'
 const TENANT_B = 'bbbbbbbb-0000-4000-8000-00000000000b'
@@ -119,5 +120,60 @@ describe('uploadPropertyVideoAction — operator en setup', () => {
   it('propiedad de otro tenant → rechazo, sin efectos', async () => {
     expect(await uploadPropertyVideoAction(PROP_A, formulario())).toMatchObject({ success: false })
     sinEfectos()
+  })
+})
+
+describe('uploadPropertyVideoAction — límites canónicos (Fase 2A)', () => {
+  // Sigue siendo la subida productiva hasta la Fase 2B/2C: misma lógica, con
+  // los límites de @/lib/property-videos/limits. Como el archivo viaja en el
+  // body de un request a Vercel, el tope es el TEMPORAL del transporte legacy
+  // (4 MiB), no los 50 MiB finales.
+  function conArchivo(opts: { type?: string; size?: number; duration?: string } = {}): FormData {
+    const file = new File([new Uint8Array([0, 0, 0, 24])], 'casa.bin', { type: opts.type ?? 'video/mp4' })
+    // Sin reservar los bytes: FormData conserva la instancia y la acción sólo lee .size.
+    if (opts.size !== undefined) Object.defineProperty(file, 'size', { value: opts.size })
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('duration_seconds', opts.duration ?? '30')
+    return fd
+  }
+
+  it('4 MiB exactos (límite legacy) → pasa y sube', async () => {
+    expect(await uploadPropertyVideoAction(PROP_A, conArchivo({ size: LEGACY_VIDEO_UPLOAD_MAX_BYTES }))).toMatchObject({ success: true })
+    expect(db.storage.callsOf('upload')).toHaveLength(1)
+  })
+
+  it('4 MiB + 1 byte → rechazo explícito "por ahora … 4 MB", sin efectos', async () => {
+    expect(await uploadPropertyVideoAction(PROP_A, conArchivo({ size: LEGACY_VIDEO_UPLOAD_MAX_BYTES + 1 })))
+      .toEqual({ success: false, error: 'Por ahora el video no puede superar 4 MB.' })
+    sinEfectos()
+  })
+
+  it('un archivo dentro del límite FINAL (p. ej. 50 MiB) igual se rechaza por el transporte legacy', async () => {
+    expect(await uploadPropertyVideoAction(PROP_A, conArchivo({ size: MAX_VIDEO_SIZE_BYTES })))
+      .toEqual({ success: false, error: 'Por ahora el video no puede superar 4 MB.' })
+    sinEfectos()
+  })
+
+  it('MIME no permitido → rechazo, sin efectos', async () => {
+    expect(await uploadPropertyVideoAction(PROP_A, conArchivo({ type: 'video/x-matroska' })))
+      .toEqual({ success: false, error: 'Solo se admiten videos MP4, WebM o MOV.' })
+    sinEfectos()
+  })
+
+  it('duración declarada > 60 → rechazo, sin efectos', async () => {
+    expect(await uploadPropertyVideoAction(PROP_A, conArchivo({ duration: '61' })))
+      .toEqual({ success: false, error: 'El video no puede superar 60 segundos.' })
+    sinEfectos()
+  })
+
+  it.each([
+    ['video/mp4', 'mp4'],
+    ['video/webm', 'webm'],
+    ['video/quicktime', 'mov'],
+  ])('%s → extensión .%s decidida por el servidor (el nombre del archivo no cuenta)', async (type, ext) => {
+    expect(await uploadPropertyVideoAction(PROP_A, conArchivo({ type }))).toMatchObject({ success: true })
+    const [upload] = db.storage.callsOf('upload')
+    expect(String(upload?.args[0])).toMatch(new RegExp(`^${TENANT_A}/[0-9a-f-]{36}\\.${ext}$`))
   })
 })

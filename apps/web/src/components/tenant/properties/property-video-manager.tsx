@@ -10,6 +10,18 @@ import {
   reorderPropertyVideosAction,
 } from '@/actions/properties'
 import { cn } from '@/lib/utils'
+// Mientras la subida sea uploadPropertyVideoAction (Server Action en Vercel),
+// el tope de tamaño es el TEMPORAL del transporte legacy, no los 50 MiB
+// finales: ver LEGACY_VIDEO_UPLOAD_MAX_BYTES en limits.ts.
+import {
+  LEGACY_VIDEO_UPLOAD_MAX_BYTES,
+  LEGACY_VIDEO_UPLOAD_MAX_LABEL,
+  MAX_PROPERTY_VIDEOS,
+  MAX_VIDEO_DURATION_SECONDS,
+  VIDEO_FILE_INPUT_ACCEPT,
+  VIDEO_LIMIT_MESSAGES,
+  isAllowedVideoMimeType,
+} from '@/lib/property-videos/limits'
 
 type VideoRow = {
   id:               string
@@ -20,11 +32,6 @@ type VideoRow = {
   sort_order:       number
   created_at:       string
 }
-
-const ALLOWED_MIME = ['video/mp4', 'video/webm', 'video/quicktime']
-const MAX_BYTES    = 80 * 1024 * 1024
-const MAX_DURATION = 60
-const MAX_VIDEOS   = 2
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -95,12 +102,12 @@ export function PropertyVideoManager({ propertyId }: PropertyVideoManagerProps) 
     e.target.value = ''
     if (!file) return
 
-    if (!ALLOWED_MIME.includes(file.type)) {
-      toast.error('Solo se admiten videos MP4, WebM o MOV.')
+    if (!isAllowedVideoMimeType(file.type)) {
+      toast.error(VIDEO_LIMIT_MESSAGES.mimeNotAllowed)
       return
     }
-    if (file.size > MAX_BYTES) {
-      toast.error('El video no puede superar 80 MB.')
+    if (file.size > LEGACY_VIDEO_UPLOAD_MAX_BYTES) {
+      toast.error(VIDEO_LIMIT_MESSAGES.legacyTooLarge)
       return
     }
 
@@ -116,8 +123,8 @@ export function PropertyVideoManager({ propertyId }: PropertyVideoManagerProps) 
       toast.error('No se pudo determinar la duración del video.')
       return
     }
-    if (duration > MAX_DURATION) {
-      toast.error(`El video dura ${Math.ceil(duration)} segundos. El máximo permitido es ${MAX_DURATION} segundos.`)
+    if (duration > MAX_VIDEO_DURATION_SECONDS) {
+      toast.error(`El video dura ${Math.ceil(duration)} segundos. El máximo permitido es ${MAX_VIDEO_DURATION_SECONDS} segundos.`)
       return
     }
 
@@ -147,7 +154,7 @@ export function PropertyVideoManager({ propertyId }: PropertyVideoManagerProps) 
     })
   }
 
-  const canUpload = !isUploading && videos.length < MAX_VIDEOS
+  const canUpload = !isUploading && videos.length < MAX_PROPERTY_VIDEOS
 
   if (isLoading) {
     return (
@@ -243,7 +250,7 @@ export function PropertyVideoManager({ propertyId }: PropertyVideoManagerProps) 
 
       {videos.length === 0 && (
         <p className="text-xs text-muted-foreground">
-          Sin videos. MP4, WebM o MOV · máx. {MAX_DURATION} seg · máx. 80 MB
+          Sin videos. MP4, WebM o MOV · máx. {MAX_VIDEO_DURATION_SECONDS} seg · máx. {LEGACY_VIDEO_UPLOAD_MAX_LABEL}
         </p>
       )}
 
@@ -253,7 +260,7 @@ export function PropertyVideoManager({ propertyId }: PropertyVideoManagerProps) 
           <input
             ref={inputRef}
             type="file"
-            accept="video/mp4,video/webm,video/quicktime,.mov"
+            accept={VIDEO_FILE_INPUT_ACCEPT}
             className="hidden"
             onChange={onFileSelect}
           />
@@ -269,15 +276,15 @@ export function PropertyVideoManager({ propertyId }: PropertyVideoManagerProps) 
             {isUploading ? (
               <><LoaderIcon className="h-3.5 w-3.5 animate-spin" /> Subiendo…</>
             ) : (
-              <><PlusIcon className="h-3.5 w-3.5" /> Agregar video ({videos.length}/{MAX_VIDEOS})</>
+              <><PlusIcon className="h-3.5 w-3.5" /> Agregar video ({videos.length}/{MAX_PROPERTY_VIDEOS})</>
             )}
           </button>
         </>
       )}
 
-      {!canUpload && !isUploading && videos.length >= MAX_VIDEOS && (
+      {!canUpload && !isUploading && videos.length >= MAX_PROPERTY_VIDEOS && (
         <p className="text-xs text-muted-foreground text-center">
-          Máximo {MAX_VIDEOS} videos por propiedad.
+          Máximo {MAX_PROPERTY_VIDEOS} videos por propiedad.
         </p>
       )}
     </div>
