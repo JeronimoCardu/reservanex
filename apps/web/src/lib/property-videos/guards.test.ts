@@ -64,7 +64,8 @@ describe('guard — el flujo TUS nunca manda el File a una Server Action ni a Re
   })
 
   it('tus-js-client se importa sólo desde el uploader', () => {
-    expect(importan(/^import (?!type\b)[^\n]*from ['"]tus-js-client['"]/m).map((f) => f.rel)).toEqual([UPLOADER])
+    // Imports de valor (también multilínea); los `import type` no llegan al bundle.
+    expect(importan(/^import (?!type\b)[^'"]*?from ['"]tus-js-client['"]/m).map((f) => f.rel)).toEqual([UPLOADER])
   })
 
   it('ningún archivo "use server" importa el uploader ni tus-js-client', () => {
@@ -96,21 +97,35 @@ describe('guard — endpoint TUS cerrado al proyecto', () => {
     expect(contrato).not.toMatch(/endpoint|url|origin|host/i)
   })
 
-  it('el endpoint se arma sólo con el host de Storage del proyecto, por https', () => {
-    expect(uploader).toMatch(/`https:\/\/\$\{projectRef\}\.storage\.supabase\.co\$\{SUPABASE_RESUMABLE_UPLOAD_PATH\}`/)
+  it('el endpoint se arma sólo con el host de Storage del proyecto, por https, en la ruta FIRMADA /sign', () => {
+    expect(uploader).toMatch(/`https:\/\/\$\{projectRef\}\.storage\.supabase\.co\$\{SUPABASE_SIGNED_RESUMABLE_UPLOAD_PATH\}`/)
+    expect(uploader).toMatch(/SUPABASE_SIGNED_RESUMABLE_UPLOAD_PATH = '\/storage\/v1\/upload\/resumable\/sign'/)
+    // El endpoint base autentica con Authorization (JWT) e ignora la firma (smoke 2B0).
+    expect(uploader).not.toMatch(/['"`]\/storage\/v1\/upload\/resumable['"`]/)
     expect(uploader).not.toMatch(/http:\/\/|localhost|127\.0\.0\.1/)
   })
 
-  it('toda request pasa por el control de destino antes de enviarse', () => {
-    expect(uploader).toMatch(/onBeforeRequest: \(req\) => assertUploadDestination\(req\.getURL\(\), endpoint\)/)
+  it('toda request pasa por el control de destino (según método) antes de enviarse, y ninguna sale después de cancelar', () => {
+    expect(uploader).toMatch(/onBeforeRequest: \(req\) => \{\s*hooks\.ensureActive\?\.\(\)\s*assertUploadDestination\(req\.getMethod\(\), req\.getURL\(\), endpoint\)\s*\}/)
+  })
+
+  it('la terminación al cancelar es propia: un intento, mismo control de destino, nunca el DELETE con reintentos de tus-js-client', () => {
+    expect(uploader).toMatch(/assertUploadDestination\(method, sessionUrl, endpoint\)/)
+    expect(uploader).toMatch(/\.abort\(false\)/)
+    expect(uploader).not.toMatch(/\.abort\(true\)|Upload\.terminate/)
+  })
+
+  it('la creación no lleva datos: la firma se valida antes de mandar bytes del video', () => {
+    expect(uploader).toMatch(/uploadDataDuringCreation:\s*false/)
+    expect(uploader).not.toMatch(/uploadDataDuringCreation:\s*true/)
   })
 
   it('el seam de tests (pila HTTP inyectable) sólo se usa desde tests', () => {
     expect(FUENTES.filter(({ rel, code }) => rel !== UPLOADER && /ForTesting|ResumableUploadTestSeam/.test(code)).map((f) => f.rel)).toEqual([])
   })
 
-  it('sin otras credenciales: ni Authorization, ni apikey, ni anon/service key', () => {
-    expect(uploader).not.toMatch(/authorization|apikey|anon|service.?role|SUPABASE_[A-Z_]*KEY/i)
+  it('sin otras credenciales: ni header Authorization, ni apikey, ni anon/service key', () => {
+    expect(uploader).not.toMatch(/['"]?authorization['"]?\s*:|\bapikey\b|\banon\b|service.?role|SUPABASE_[A-Z_]*KEY/i)
   })
 })
 
@@ -146,11 +161,13 @@ describe('guard — el token de subida firmada no va a logs ni se persiste', () 
     expect(uploader).toMatch(/urlStorage:\s*NO_URL_STORAGE/)
   })
 
-  it('el token sólo viaja en el header x-signature (nunca en la URL)', () => {
+  it('el token sólo viaja en el header x-signature (nunca en la URL); además sólo se lee su exp localmente', () => {
     const usos = uploader.split('\n').filter((line) => /signedUploadToken/.test(line)).map((line) => line.trim())
     expect(usos).toEqual([
       'signedUploadToken: string',
       "'x-signature': input.signedUploadToken,",
+      'const tokenExpiresAtMs = signedTokenExpiryMs(input.signedUploadToken)',
+      "req.setHeader('x-signature', input.signedUploadToken)",
       "if (!input.signedUploadToken) throw new TypeError('falta el token de subida firmada')",
     ])
     expect(uploader).not.toMatch(/searchParams|[?&]token=/)
