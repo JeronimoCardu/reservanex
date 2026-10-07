@@ -2,163 +2,153 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { createClient }      from '@orderflow/supabase/server'
 import { createAdminClient } from '@orderflow/supabase/admin'
 import { parseAccessTokenClaims } from '@/lib/claims'
+import { isPropertyPubliclyVisible, isTenantPubliclyVisible } from '@/lib/site/public-visibility'
+import {
+  isStorageObjectMissing,
+  isUuid,
+  PROPERTY_VIDEO_SIGNED_URL_TTL_SECONDS,
+  PROPERTY_VIDEOS_BUCKET,
+} from '@/lib/property-videos/delivery'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// Parses the Range header value into {start, end}.
-function parseByteRange(
-  rangeHeader: string | null,
-  totalSize:   number,
-): { start: number; end: number } | false | null {
-  if (!rangeHeader) return null
-  const match = /^bytes=(\d+)-(\d*)$/.exec(rangeHeader)
-  if (!match) return false
-  const start = parseInt(match[1]!, 10)
-  const end   = match[2] !== '' ? parseInt(match[2]!, 10) : totalSize - 1
-  if (start > end || end >= totalSize || start < 0) return false
-  return { start, end }
-}
-
 // GET /api/property-videos/{videoId}
 //
-// Serves a video from the private property-videos bucket.
-// Authorization:
-//   - Authenticated tenant user whose tenant_id matches the video → always served
-//     (allows dashboard preview of unpublished properties).
-//   - Unauthenticated (or wrong tenant) → property must be published AND
-//     tenant must have public_site_enabled = true.
+// Property Videos Fase 1 — esta ruta AUTORIZA y REDIRIGE; no transporta bytes.
+// Responde 307 a una signed URL privada de Storage y el browser repite ahí su
+// request (con el mismo Range), así que Storage sirve el 206 directamente. Ver
+// lib/property-videos/delivery.ts para el TTL y la semántica de caché y
+// revocación. La URL de esta ruta es la estable: es la que usan los <video>.
 //
-// Never exposes the bucket path or a signed URL.
-// Supports Range requests for browser seek and duration detection.
+// Quién puede ver:
+//   · vista previa: usuario del mismo tenant, u operator con una impersonación
+//     activa sobre ese tenant — aunque la propiedad no esté publicada (misma
+//     semántica que antes de la Fase 1);
+//   · cualquier otro (anónimo o de otro tenant): sólo si la propiedad está
+//     publicada y no borrada, y el tenant es visible con la MISMA regla que el
+//     sitio público (isTenantPubliclyVisible, compartida con getPublicTenant).
+// En los dos casos el video tiene que ser del mismo tenant que su propiedad.
+//
+// Todo lo que no se puede ver es 404, igual por cualquier motivo: la
+// existencia de un video no es un oráculo. 503 sólo ante un error operativo
+// de la base o de Storage, sin detalle.
+
+const NO_STORE = 'private, no-store'
+
+function notFound(): NextResponse {
+  return NextResponse.json({ error: 'Not found' }, { status: 404, headers: { 'Cache-Control': NO_STORE } })
+}
+
+function unavailable(): NextResponse {
+  return NextResponse.json({ error: 'Unavailable' }, { status: 503, headers: { 'Cache-Control': NO_STORE } })
+}
+
+type AdminClient = ReturnType<typeof createAdminClient>
+
+// Vista previa del dashboard. Sin cambios de semántica respecto de la ruta
+// anterior: tenant_user del mismo tenant, u operator cuya impersonación activa
+// más reciente apunta a ese tenant.
+async function canPreview(admin: AdminClient, videoTenantId: string): Promise<boolean> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return false
+
+  const { data: { session } } = await supabase.auth.getSession()
+  const claims = parseAccessTokenClaims(session?.access_token)
+
+  if (claims?.user_type === 'tenant_user') return claims.tenant_id === videoTenantId
+
+  if (claims?.user_type === 'platform_user' && claims.role === 'operator') {
+    const { data: imp } = await admin
+      .from('impersonation_sessions')
+      .select('target_tenant_id')
+      .eq('platform_user_id', user.id)
+      .is('ended_at', null)
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    return imp?.target_tenant_id === videoTenantId
+  }
+
+  return false
+}
+
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ videoId: string }> },
 ) {
   const { videoId } = await params
+
+  // 1. Un id que ni siquiera es un UUID no llega a la base.
+  if (!isUuid(videoId)) return notFound()
+
   const admin = createAdminClient()
 
-  // 1. Fetch video row (admin bypasses RLS — access validated below)
-  const { data: video } = await admin
+  // 2. El video.
+  const { data: video, error: videoError } = await admin
     .from('property_videos')
-    .select('id, tenant_id, property_id, storage_path, mime_type')
+    .select('id, tenant_id, property_id, storage_path')
     .eq('id', videoId)
     .maybeSingle()
 
-  if (!video) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (videoError) {
+    console.error('[property-videos] video lookup failed', { videoId, code: videoError.code })
+    return unavailable()
   }
+  if (!video) return notFound()
 
-  // 2. Determine authorization
-  let authorized = false
+  // 3. Su propiedad. Se lee SIEMPRE, también para la vista previa: un video
+  //    cuya propiedad es de otro tenant no se sirve a nadie (es la fila que
+  //    podía crear uploadPropertyVideoAction antes de la Fase 1).
+  const { data: property, error: propertyError } = await admin
+    .from('properties')
+    .select('tenant_id, published, deleted_at')
+    .eq('id', video.property_id)
+    .maybeSingle()
 
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-
-  if (user) {
-    const { data: { session } } = await supabase.auth.getSession()
-    const claims = parseAccessTokenClaims(session?.access_token)
-    if (claims?.user_type === 'tenant_user' && claims.tenant_id === video.tenant_id) {
-      authorized = true
-    } else if (claims?.user_type === 'platform_user' && claims.role === 'operator') {
-      // Operator in setup mode — check active impersonation session targeting this tenant
-      const { data: imp } = await admin
-        .from('impersonation_sessions')
-        .select('target_tenant_id')
-        .eq('platform_user_id', user.id)
-        .is('ended_at', null)
-        .order('started_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      if (imp && imp.target_tenant_id === video.tenant_id) {
-        authorized = true
-      }
-    }
+  if (propertyError) {
+    console.error('[property-videos] property lookup failed', { videoId, code: propertyError.code })
+    return unavailable()
   }
+  if (!property || property.tenant_id !== video.tenant_id) return notFound()
 
-  if (!authorized) {
-    // Unauthenticated (or different-tenant) visitor: require property published + site enabled
-    const { data: property } = await admin
-      .from('properties')
-      .select('published, deleted_at, tenant_id')
-      .eq('id', video.property_id)
-      .maybeSingle()
+  // 4. Vista previa autorizada, o las reglas del sitio público.
+  if (!(await canPreview(admin, video.tenant_id))) {
+    if (!isPropertyPubliclyVisible(property, video.tenant_id)) return notFound()
 
-    if (
-      !property ||
-      property.tenant_id !== video.tenant_id ||
-      !property.published ||
-      property.deleted_at != null
-    ) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    }
-
-    const { data: tenant } = await admin
+    const { data: tenant, error: tenantError } = await admin
       .from('tenants')
-      .select('public_site_enabled')
+      .select('status, public_site_enabled, deleted_at')
       .eq('id', video.tenant_id)
       .maybeSingle()
 
-    if (!tenant?.public_site_enabled) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (tenantError) {
+      console.error('[property-videos] tenant lookup failed', { videoId, code: tenantError.code })
+      return unavailable()
     }
-
-    authorized = true
+    if (!tenant || !isTenantPubliclyVisible(tenant)) return notFound()
   }
 
-  if (!authorized) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  // 5. Firma de vida corta sobre el objeto privado. Nada de esto se loguea:
+  //    ni la URL, ni el token, ni el storage_path.
+  const { data: signed, error: signError } = await admin.storage
+    .from(PROPERTY_VIDEOS_BUCKET)
+    .createSignedUrl(video.storage_path, PROPERTY_VIDEO_SIGNED_URL_TTL_SECONDS)
+
+  if (signError || !signed?.signedUrl) {
+    const missing = isStorageObjectMissing(signError)
+    console.error('[property-videos] signed url failed', { videoId, objectMissing: missing })
+    return missing ? notFound() : unavailable()
   }
 
-  // 3. Download from private bucket
-  const { data: fileBlob, error: downloadError } = await admin.storage
-    .from('property-videos')
-    .download(video.storage_path)
-
-  if (downloadError || !fileBlob) {
-    console.error('[property-videos-api] download error:', downloadError?.message, { videoId })
-    return NextResponse.json({ error: 'Video not found' }, { status: 404 })
-  }
-
-  const arrayBuffer = await fileBlob.arrayBuffer()
-  const totalSize   = arrayBuffer.byteLength
-  const mimeType    = video.mime_type || 'video/mp4'
-
-  const sharedHeaders: Record<string, string> = {
-    'Content-Type':  mimeType,
-    'Accept-Ranges': 'bytes',
-    'Cache-Control': 'private, max-age=300',
-  }
-
-  // 4. Range support
-  const range = parseByteRange(req.headers.get('range'), totalSize)
-
-  if (range === false) {
-    return new Response(null, {
-      status:  416,
-      headers: { 'Content-Range': `bytes */${totalSize}` },
-    })
-  }
-
-  if (range !== null) {
-    const { start, end } = range
-    const chunkBuffer    = arrayBuffer.slice(start, end + 1)
-    const chunkSize      = end - start + 1
-    return new Response(chunkBuffer, {
-      status:  206,
-      headers: {
-        ...sharedHeaders,
-        'Content-Length': String(chunkSize),
-        'Content-Range':  `bytes ${start}-${end}/${totalSize}`,
-      },
-    })
-  }
-
-  return new Response(arrayBuffer, {
-    status:  200,
+  // 6. 307 sin cuerpo. El Range del request original, si vino, lo repite el
+  //    browser contra Storage: esta ruta no lo lee.
+  return new NextResponse(null, {
+    status:  307,
     headers: {
-      ...sharedHeaders,
-      'Content-Length': String(totalSize),
+      Location:        signed.signedUrl,
+      'Cache-Control': NO_STORE,
     },
   })
 }

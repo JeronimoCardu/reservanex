@@ -387,6 +387,28 @@ export async function uploadPropertyVideoAction(
     return { success: false, error: 'No tenés permiso para subir videos.' }
   }
 
+  const supabase = await createClient()
+
+  // Property Videos Fase 1 — la propiedad tiene que ser DEL tenant actual y no
+  // estar borrada, y se resuelve ANTES de cualquier efecto (subir bytes,
+  // insertar la fila). Sin esto, propertyId venía del cliente sin verificar:
+  // la RLS de property_videos sólo controla tenant_id y la FK acepta
+  // cualquier propiedad existente, así que un tenant podía colgar un video de
+  // la propiedad publicada de otro. Mismo chequeo que reorderPropertyVideosAction,
+  // más deleted_at. Con el cliente de la sesión: la RLS de properties se suma
+  // al filtro explícito, no lo reemplaza.
+  const { data: property } = await supabase
+    .from('properties')
+    .select('id')
+    .eq('id', propertyId)
+    .eq('tenant_id', ctx.tenantId)
+    .is('deleted_at', null)
+    .maybeSingle()
+
+  if (!property) {
+    return { success: false, error: 'Propiedad no encontrada.' }
+  }
+
   const raw = formData.get('file')
   if (!raw || typeof raw === 'string') {
     return { success: false, error: 'No se recibió ningún archivo.' }
@@ -408,8 +430,6 @@ export async function uploadPropertyVideoAction(
 
   const title = formData.get('title')
   const titleStr = title && typeof title === 'string' && title.trim() ? title.trim() : null
-
-  const supabase = await createClient()
 
   // Enforce max 2 videos per property
   const { count } = await supabase

@@ -40,14 +40,23 @@ try {
   console.warn('[next.config] NEXT_PUBLIC_SUPABASE_URL is missing/invalid — next/image will not be able to load Supabase Storage images.')
 }
 
+// Max request body for Server Actions — image (≤5 MB) and audio (≤16 MB)
+// uploads go through them. Shared by the two options below: with middleware
+// configured, Next buffers the body for it up to middlewareClientMaxBodySize
+// (default 10 MB) and silently TRUNCATES anything larger, so a Server Action
+// would get a cut multipart and fail with "Unexpected end of form" before it
+// even runs — whatever bodySizeLimit says. Vercel's own 4.5 MB per-request cap
+// still applies on top of this in production.
+const SERVER_ACTION_BODY_LIMIT = '20mb'
+
 const config: NextConfig = {
   transpilePackages: ['@orderflow/types', '@orderflow/supabase', '@orderflow/validators'],
   serverExternalPackages: ['pdfkit'],
   experimental: {
     serverActions: {
-      // Raise limit to support image (≤5 MB) and audio (≤16 MB) uploads via Server Actions.
-      bodySizeLimit: '20mb',
+      bodySizeLimit: SERVER_ACTION_BODY_LIMIT,
     },
+    middlewareClientMaxBodySize: SERVER_ACTION_BODY_LIMIT,
   },
   images: {
     formats: ['image/avif', 'image/webp'],

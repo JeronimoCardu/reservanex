@@ -68,6 +68,7 @@ See `docs/secret-rotation-runbook.md` for the exact procedure for each of these.
 
 - [ ] Confirm bucket visibility matches intent: `property-images`/`tenant-public-assets` public (by design), `property-videos`/`reservation-docs`/`whatsapp-media` private
 - [ ] Confirm no new bucket was added without an equivalent `storage.objects` RLS policy (tenant-path-scoped, matching the existing `(storage.foldername(name))[1] = auth_tenant_id()` pattern)
+- [ ] `property-videos` is served by `/api/property-videos/{id}` as a **307 to a 15-minute signed URL** (Property Videos Fase 1 — the route no longer proxies bytes). The stable URL re-checks authorization on every request (same public-visibility rule as the public site, plus video/property tenant match) and its 307 is `private, no-store`. Revocation of an **already issued** signed URL is eventual: it stays usable for its TTL, and with Supabase Smart CDN a cached response can outlive the token until the CDN cache expires (deleting the object invalidates it, up to ~60 s). See `apps/web/src/lib/property-videos/delivery.ts`.
 
 ## 8. Logs
 

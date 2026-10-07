@@ -1,4 +1,5 @@
 import { createAdminClient } from '@orderflow/supabase/admin'
+import { isTenantPubliclyVisible } from '@/lib/site/public-visibility'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -104,13 +105,17 @@ export async function getPublicTenant(publicSlug: string): Promise<PublicTenant 
   // running). Checked here, not via a public_site_enabled flip, so the
   // owner's own public_site_enabled preference is preserved and
   // automatically resumes once the tenant is reactivated.
-  if (data.status !== 'trial' && data.status !== 'active') return null
-  // Fase 10 Paso 3 — every real caller already checks
-  // `!tenant || !tenant.public_site_enabled` identically (notFound()/404/
-  // empty metadata either way), so this changes no behavior today. Moving
-  // the check here means a future caller can't accidentally skip it and
-  // serve a tenant that never opted into a public site.
-  if (!data.public_site_enabled) return null
+  //
+  // Fase 10 Paso 3 — public_site_enabled is checked here too, so a future
+  // caller can't accidentally skip it and serve a tenant that never opted
+  // into a public site.
+  //
+  // Property Videos Fase 1 — both rules now live in isTenantPubliclyVisible,
+  // shared with /api/property-videos. deleted_at is null by construction:
+  // this same query filters it.
+  if (!isTenantPubliclyVisible({ status: data.status, public_site_enabled: data.public_site_enabled, deleted_at: null })) {
+    return null
+  }
   return (data as unknown) as PublicTenant
 }
 
@@ -212,10 +217,13 @@ export async function listPublicProperties(tenantId: string): Promise<PublicProp
       .select('id, property_id, image_url, alt, is_cover, sort_order')
       .in('property_id', ids)
       .order('sort_order', { ascending: true }),
+    // Property Videos Fase 1 — tenant_id explícito: un video de otro tenant
+    // colgado de una de estas propiedades no cuenta (ver la ficha, abajo).
     supabase
       .from('property_videos')
       .select('property_id')
-      .in('property_id', ids),
+      .in('property_id', ids)
+      .eq('tenant_id', tenantId),
   ])
 
   const imgMap      = new Map<string, PublicPropertyImage[]>()
@@ -282,10 +290,15 @@ export async function getPublicPropertyBySlug(
 
   const p = (prop as unknown) as RawRow
 
+  // Property Videos Fase 1 — tenant_id explícito además del property_id. Hasta
+  // esa fase la subida no verificaba que la propiedad fuera del tenant, así
+  // que pudo quedar una fila de video de OTRO tenant apuntando a esta
+  // propiedad: no tiene que aparecer en su ficha pública.
   const videoPromise = supabase
     .from('property_videos')
     .select('id, title, mime_type, duration_seconds, sort_order')
     .eq('property_id', p.id)
+    .eq('tenant_id', tenantId)
     .order('sort_order', { ascending: true })
 
   const [imagesResult, videosResult] = await Promise.all([
