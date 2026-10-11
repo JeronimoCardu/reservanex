@@ -2436,6 +2436,73 @@ export type Database = {
           },
         ]
       }
+      property_video_uploads: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          expires_at: string
+          failure_reason: string | null
+          id: string
+          mime_type: string
+          property_id: string
+          request_id: string
+          resolved_at: string | null
+          status: string
+          storage_path: string
+          tenant_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          expires_at: string
+          failure_reason?: string | null
+          id: string
+          mime_type: string
+          property_id: string
+          request_id: string
+          resolved_at?: string | null
+          status?: string
+          storage_path: string
+          tenant_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string
+          failure_reason?: string | null
+          id?: string
+          mime_type?: string
+          property_id?: string
+          request_id?: string
+          resolved_at?: string | null
+          status?: string
+          storage_path?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_video_uploads_property_tenant_fkey"
+            columns: ["property_id", "tenant_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id", "tenant_id"]
+          },
+          {
+            foreignKeyName: "property_video_uploads_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_video_uploads_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants_public"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       property_videos: {
         Row: {
           created_at: string
@@ -2486,6 +2553,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "properties"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_videos_property_tenant_fkey"
+            columns: ["property_id", "tenant_id"]
+            isOneToOne: false
+            referencedRelation: "properties"
+            referencedColumns: ["id", "tenant_id"]
           },
           {
             foreignKeyName: "property_videos_tenant_id_fkey"
@@ -4041,6 +4115,10 @@ export type Database = {
       auth_user_role: { Args: never; Returns: string }
       auth_user_type: { Args: never; Returns: string }
       auth_workspace_ids: { Args: never; Returns: string[] }
+      cancel_property_video_upload: {
+        Args: { p_tenant_id: string; p_upload_id: string }
+        Returns: Json
+      }
       cancel_property_visit: {
         Args: { p_reason?: string; p_visit_id: string }
         Returns: Json
@@ -4162,6 +4240,25 @@ export type Database = {
         }
         Returns: Json
       }
+      fail_property_video_upload: {
+        Args: { p_reason: string; p_tenant_id: string; p_upload_id: string }
+        Returns: Json
+      }
+      finalize_property_video_upload: {
+        Args: {
+          p_duration_seconds: number
+          p_object_id: string
+          p_object_version: string
+          p_size_bytes: number
+          p_tenant_id: string
+          p_upload_id: string
+        }
+        Returns: Json
+      }
+      get_property_video_upload_object: {
+        Args: { p_tenant_id: string; p_upload_id: string }
+        Returns: Json
+      }
       is_operator: { Args: never; Returns: boolean }
       is_operator_in_setup: { Args: never; Returns: boolean }
       is_owner: { Args: never; Returns: boolean }
@@ -4204,6 +4301,17 @@ export type Database = {
           p_scheduled_date: string
           p_scheduled_time: string
           p_visit_id: string
+        }
+        Returns: Json
+      }
+      reserve_property_video_upload: {
+        Args: {
+          p_expires_at: string
+          p_mime_type: string
+          p_property_id: string
+          p_request_id: string
+          p_tenant_id: string
+          p_user_id: string
         }
         Returns: Json
       }
