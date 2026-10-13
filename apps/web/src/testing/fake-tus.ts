@@ -8,7 +8,12 @@
 //   · el Location conserva /sign: <origen>/storage/v1/upload/resumable/sign/<id>,
 //     absoluto y en el mismo host, con <id> = base64url sin padding de
 //     {bucket}/{objeto}/{versión UUID} (formato observado en el smoke 2B0.1);
-//   · PATCH por offset, HEAD para reanudar y DELETE para terminar.
+//   · PATCH por offset, HEAD para reanudar y DELETE para terminar;
+//   · /sign verifica x-signature en CADA request —POST, HEAD, PATCH y DELETE—
+//     y la firma tiene que ser de ESE objeto (medido en el smoke 2B1.2). Los
+//     rechazos son HTTP 400 con el motivo en texto plano (HEAD: sin cuerpo),
+//     en el orden del verifier real: sin header → no es JWS → firma inválida
+//     → vencido → otro objeto.
 // Registra cada request para que los tests verifiquen destino, headers y
 // tamaños de chunk, y permite inyectar fallas: caída de red, status HTTP,
 // request colgado (para cancelar en vuelo; un PATCH abortado puede dejar bytes
@@ -27,10 +32,24 @@ export const FAKE_TUS_SIGNED_PATH = '/storage/v1/upload/resumable/sign'
 export const STORAGE_BASE_ROUTE_REJECTION = '{"statusCode":"403","code":"AccessDenied","error":"Unauthorized","message":"Invalid Compact JWS"}'
 
 /**
- * Firma inválida en /sign. APROXIMACIÓN: el formato real todavía no se observó
- * en QA; sigue el estilo de error de Storage (HTTP 400 + statusCode en el body).
+ * Rechazos REALES de /sign (smoke 2B1.2, reservanex-lab): HTTP 400 y el motivo
+ * en texto plano, igual en POST, PATCH y DELETE. HEAD: 400 sin cuerpo.
  */
-export const FAKE_SIGNED_ROUTE_REJECTION = '{"statusCode":"403","code":"InvalidSignature","error":"Unauthorized","message":"invalid signature"}'
+export const STORAGE_SIGNED_ROUTE_REJECTION = {
+  missingSignature: 'Missing x-signature header',
+  badSignature:     'signature verification failed',
+  notCompactJws:    'Invalid Compact JWS',
+  otherObject:      'Invalid signature',
+} as const
+
+/**
+ * Token vencido en /sign: NO MEDIDO (habría que esperar a que venza). Storage
+ * verifica con jose jwtVerify, que rechaza un exp vencido con este mensaje
+ * antes de su propio chequeo explícito (STORAGE_EXPIRED_SIGNATURE_MESSAGE).
+ */
+export const STORAGE_EXPIRED_JWT_REJECTION = '"exp" claim timestamp check failed'
+/** Mensaje del chequeo explícito de Storage (ERRORS.ExpiredSignature). NO MEDIDO. */
+export const STORAGE_EXPIRED_SIGNATURE_MESSAGE = 'The provided token has expired.'
 
 export type FakeTusFault =
   | { kind: 'network' }
@@ -72,13 +91,22 @@ export class FakeTusServer implements HttpStack {
   /** Se llama al CREAR cada request (antes de que tus-js-client la envíe): permite cancelar en un punto exacto. */
   onCreateRequest: ((method: string, url: string) => void) | null = null
 
+  /** "Clave" del proyecto: el segmento de firma que el fake considera criptográficamente válido. */
+  private readonly signingKey: string
+
   constructor(
     /** Origen de Storage, p. ej. https://<ref>.storage.supabase.co */
     readonly origin: string,
+    /**
+     * Un token firmado por el proyecto (JWT). Cualquier otro JWT con el MISMO
+     * segmento de firma cuenta como firmado por el proyecto: así los tests
+     * arman tokens válidos pero vencidos o de otro objeto.
+     */
     readonly acceptedSignature: string,
   ) {
     this.baseEndpoint = `${origin}${FAKE_TUS_BASE_PATH}`
     this.signedEndpoint = `${origin}${FAKE_TUS_SIGNED_PATH}`
+    this.signingKey = acceptedSignature.split('.')[2] ?? acceptedSignature
   }
 
   /** La próxima request con ese método falla así (en orden de registro). */
@@ -152,7 +180,10 @@ export class FakeTusServer implements HttpStack {
       return response(400, {}, '{"statusCode":"400","error":"fake","message":"auth JWT no simulada"}')
     }
     if (!signed) return response(404)
-    if (record.headers['x-signature'] !== this.acceptedSignature) return response(400, {}, FAKE_SIGNED_ROUTE_REJECTION)
+    const objectKey = record.method === 'POST' ? this.objectKeyOfCreation(record) : this.objectKeyOfSession(record.url)
+    const rejection = this.verifySignature(record.headers['x-signature'], objectKey)
+    // HEAD no tiene cuerpo: Storage real responde 400 a secas.
+    if (rejection !== null) return response(400, {}, record.method === 'HEAD' ? '' : rejection)
 
     switch (record.method) {
       case 'POST': {
@@ -227,6 +258,42 @@ export class FakeTusServer implements HttpStack {
         reject(new Error('fake: request abortado'))
       })
     })
+  }
+
+  /**
+   * El verifier de Storage (verifyObjectSignature), en su orden: sin header →
+   * no es un JWS → firma que no es del proyecto → vencido (jose lo rechaza en
+   * jwtVerify) → token de otro objeto. null = aceptada.
+   */
+  private verifySignature(token: string | undefined, objectKey: string | null): string | null {
+    if (!token) return STORAGE_SIGNED_ROUTE_REJECTION.missingSignature
+    const parts = token.split('.')
+    if (parts.length !== 3 || !parts.every((p) => /^[A-Za-z0-9_-]+$/.test(p))) return STORAGE_SIGNED_ROUTE_REJECTION.notCompactJws
+    let payload: { exp?: unknown; url?: unknown }
+    try {
+      payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as { exp?: unknown; url?: unknown }
+    } catch {
+      return STORAGE_SIGNED_ROUTE_REJECTION.notCompactJws
+    }
+    if (parts[2] !== this.signingKey) return STORAGE_SIGNED_ROUTE_REJECTION.badSignature
+    if (typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now()) return STORAGE_EXPIRED_JWT_REJECTION
+    if (objectKey !== null && payload.url !== objectKey) return STORAGE_SIGNED_ROUTE_REJECTION.otherObject
+    return null
+  }
+
+  /** {bucket}/{objeto} de una creación (Upload-Metadata). */
+  private objectKeyOfCreation(record: RecordedRequest): string | null {
+    const metadata = decodeTusMetadata(record.headers['upload-metadata'] ?? '')
+    return metadata.bucketName && metadata.objectName ? `${metadata.bucketName}/${metadata.objectName}` : null
+  }
+
+  /** {bucket}/{objeto} de una sesión: el id es base64url de {bucket}/{objeto}/{versión}. */
+  private objectKeyOfSession(url: string): string | null {
+    const id = this.sessionIdOf(url)
+    if (!id) return null
+    const decoded = Buffer.from(id, 'base64url').toString('utf8')
+    const cut = decoded.lastIndexOf('/')
+    return cut > 0 ? decoded.slice(0, cut) : null
   }
 
   private sessionIdOf(url: string): string | null {

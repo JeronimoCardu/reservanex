@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Upload } from 'tus-js-client'
 import {
   NO_URL_STORAGE,
+  CLASSIFY_BODY_MAX_CHARS,
   RESUMABLE_UPLOAD_RETRY_DELAYS_MS,
   SUPABASE_SIGNED_RESUMABLE_UPLOAD_PATH,
   SUPABASE_TUS_CHUNK_SIZE_BYTES,
@@ -23,9 +24,11 @@ import {
 } from './resumable-upload'
 import { LEGACY_VIDEO_UPLOAD_MAX_BYTES, MAX_VIDEO_SIZE_BYTES } from './limits'
 import {
-  FAKE_SIGNED_ROUTE_REJECTION,
   FakeTusServer,
   STORAGE_BASE_ROUTE_REJECTION,
+  STORAGE_EXPIRED_JWT_REJECTION,
+  STORAGE_EXPIRED_SIGNATURE_MESSAGE,
+  STORAGE_SIGNED_ROUTE_REJECTION,
   decodeTusMetadata,
 } from '@/testing/fake-tus'
 
@@ -48,10 +51,14 @@ const OBJECT_PATH = 'aaaaaaaa-0000-4000-8000-00000000000a/11111111-2222-4000-800
 const VIDEO = new File([new Uint8Array(13 * MB)], 'casa.mp4', { type: 'video/mp4' })
 const SESSION_URL = new RegExp(`^${SIGNED_ENDPOINT.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}/[A-Za-z0-9_-]+$`)
 
-/** JWT de prueba con la forma del token de createSignedUploadUrl (firma falsa: sólo se lee el exp). */
-function fakeSignedToken(expSeconds: number): string {
+/**
+ * JWT de prueba con la forma del token de createSignedUploadUrl. La firma es
+ * falsa: el uploader sólo lee el exp, y el fake considera "firmado por el
+ * proyecto" a todo token con este mismo segmento de firma.
+ */
+function fakeSignedToken(expSeconds: number, objectPath = OBJECT_PATH): string {
   const part = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
-  return `${part({ alg: 'HS256', typ: 'JWT' })}.${part({ url: `property-videos/${OBJECT_PATH}`, scope: 'upload', upsert: false, iat: expSeconds - 7200, exp: expSeconds })}.firma-de-prueba`
+  return `${part({ alg: 'HS256', typ: 'JWT' })}.${part({ url: `property-videos/${objectPath}`, scope: 'upload', upsert: false, iat: expSeconds - 7200, exp: expSeconds })}.firma-de-prueba`
 }
 const nowSeconds = () => Math.floor(Date.now() / 1000)
 const TOKEN = fakeSignedToken(nowSeconds() + 7200)
@@ -177,7 +184,7 @@ describe('creación sin datos (uploadDataDuringCreation: false)', () => {
   })
 
   it('si el POST falla, se transfieren 0 bytes del video', async () => {
-    server.failNext('POST', { kind: 'status', status: 400, body: FAKE_SIGNED_ROUTE_REJECTION })
+    server.failNext('POST', { kind: 'status', status: 400, body: STORAGE_SIGNED_ROUTE_REJECTION.badSignature })
     expect(await uploader().start()).toEqual({ status: 'authorization_error', httpStatus: 400 })
     expect(server.requests).toHaveLength(1)
     expect(sentBytes()).toBe(0)
@@ -736,7 +743,7 @@ describe('retry / resume', () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000 + 1000) // pasan las 2 h de la firma
     server.expireUploads()
-    server.failNext('POST', { kind: 'status', status: 400, body: FAKE_SIGNED_ROUTE_REJECTION })
+    // Sin fallas inyectadas: el fake rechaza el token vencido como el verifier real.
     expect(await upload.start()).toEqual({ status: 'expired_token', httpStatus: 400 })
     expect(upload.status).toBe('expired_token')
   })
@@ -806,18 +813,24 @@ describe('errores tipados', () => {
     expect(classifyUploadFailure({ originalResponse: res(status, body) }, { tokenExpired: true })).toEqual({ status: 'expired_token', httpStatus: status })
   })
 
-  it('"Invalid Compact JWS", 400 o AccessDenied NO alcanzan para decir "vencido"', () => {
+  it('"Invalid Compact JWS", 400 o AccessDenied son rechazo de credencial, pero NO evidencia de vencimiento', () => {
     expect(classifyUploadFailure({ originalResponse: res(400, STORAGE_BASE_ROUTE_REJECTION) })).toEqual({ status: 'authorization_error', httpStatus: 400 })
-    expect(classifyUploadFailure({ originalResponse: res(400, '{"code":"AccessDenied","message":"Invalid Compact JWS"}') })).toEqual({ status: 'storage_error', httpStatus: 400 })
+    expect(classifyUploadFailure({ originalResponse: res(400, '{"code":"AccessDenied","message":"Invalid Compact JWS"}') })).toEqual({ status: 'authorization_error', httpStatus: 400 })
+    expect(classifyUploadFailure({ originalResponse: res(400, 'Invalid Compact JWS') })).toEqual({ status: 'authorization_error', httpStatus: 400 })
   })
 
-  // Sin estructura de rechazo de credencial no se adivina por el texto, ni
-  // siquiera con el token vencido.
+  // Sin evidencia explícita de rechazo de credencial no se adivina, ni siquiera
+  // con el token vencido: un 400 cualquiera (o vacío) es storage_error, y un
+  // 404/409/... nunca es credencial, diga lo que diga el body.
   it.each([
     [400, '{"statusCode":"409","error":"Duplicate","message":"The resource already exists"}'],
-    [400, 'jwt expired'],
-    [400, '{"message":"The token has expired"}'],
+    [400, '{"statusCode":"400","error":"InvalidRequest","message":"Invalid Upload-Metadata header"}'],
     [400, 'bucket not found'],
+    [400, 'The object exceeded the maximum allowed size'],
+    [400, ''],
+    [404, 'Invalid signature'],
+    [409, 'signature verification failed'],
+    [500, 'The provided token has expired.'],
     [404, ''],
     [409, ''],
     [410, ''],
@@ -838,6 +851,214 @@ describe('errores tipados', () => {
     [{ originalResponse: res(0) }],
   ])('sin respuesta HTTP (%j) → network_error', (error) => {
     expect(classifyUploadFailure(error)).toEqual({ status: 'network_error' })
+  })
+})
+
+// ── Property Videos 2B1.3 — contrato REAL de /sign ───────────────────────────
+//
+// Medido contra Storage real en reservanex-lab (smoke 2B1.2): /sign rechaza la
+// firma con HTTP 400 y el motivo en TEXTO PLANO, en POST/PATCH/DELETE (HEAD:
+// 400 sin cuerpo). El classifier anterior sólo reconocía el JSON
+// {"statusCode":"403"} del endpoint BASE (smoke 2B0), así que todo rechazo real
+// de /sign terminaba en storage_error.
+
+const classify = (status: number, body: string, tokenExpired = false) =>
+  classifyUploadFailure({ originalResponse: res(status, body) }, { tokenExpired })
+const AUTH_400 = { status: 'authorization_error', httpStatus: 400 }
+const EXPIRED_400 = { status: 'expired_token', httpStatus: 400 }
+const STORAGE_400 = { status: 'storage_error', httpStatus: 400 }
+
+describe('classifier: rechazos reales de /sign (texto plano)', () => {
+  it.each([
+    ['1 · sin header', STORAGE_SIGNED_ROUTE_REJECTION.missingSignature],
+    ['2 · firma adulterada', STORAGE_SIGNED_ROUTE_REJECTION.badSignature],
+    ['3 · no es un JWS, con el token vigente', STORAGE_SIGNED_ROUTE_REJECTION.notCompactJws],
+    ['4/5 · token válido de otro objeto o sesión', STORAGE_SIGNED_ROUTE_REJECTION.otherObject],
+  ])('%s: 400 "%s" → authorization_error', (_, body) => {
+    expect(classify(400, body)).toEqual(AUTH_400)
+  })
+
+  it('tolera mayúsculas, espacios, puntuación y el mismo mensaje dentro de JSON', () => {
+    for (const body of [
+      'MISSING X-SIGNATURE HEADER',
+      'Signature  verification failed.',
+      ' invalid compact jws\n',
+      '{"message":"Invalid signature"}',
+      '{"statusCode":"400","error":"InvalidJWT","message":"signature verification failed"}',
+      'Invalid JWT',
+      'Token is not scoped for upload',
+    ]) {
+      expect(classify(400, body)).toEqual(AUTH_400)
+    }
+  })
+
+  it('"invalid signature" sólo como palabras completas', () => {
+    expect(classify(400, 'invalid signatures list')).toEqual(STORAGE_400)
+  })
+
+  it.each([
+    ['6 · ERRORS.ExpiredSignature de Storage', STORAGE_EXPIRED_SIGNATURE_MESSAGE],
+    ['jose JWTExpired (lo que respondería jwtVerify primero)', STORAGE_EXPIRED_JWT_REJECTION],
+    ['variante', 'jwt expired'],
+    ['variante JSON', '{"message":"The token has expired"}'],
+    ['variante', 'Token expired'],
+  ])('%s: Storage dice explícitamente que venció → expired_token aunque el exp local siga vigente', (_, body) => {
+    expect(classify(400, body)).toEqual(EXPIRED_400)
+  })
+
+  it('7 · rechazo de firma + JWT local ya vencido → expired_token', () => {
+    for (const body of Object.values(STORAGE_SIGNED_ROUTE_REJECTION)) expect(classify(400, body, true)).toEqual(EXPIRED_400)
+  })
+
+  it('8 · 400 genérico no relacionado con auth → storage_error, con o sin exp vencido', () => {
+    for (const body of ['Upload-Length is required', '{"statusCode":"400","message":"Invalid Upload-Metadata header"}', 'The object exceeded the maximum allowed size']) {
+      expect(classify(400, body)).toEqual(STORAGE_400)
+      expect(classify(400, body, true)).toEqual(STORAGE_400)
+    }
+  })
+
+  it('9 · JSON legacy {"statusCode":"401"|"403"} sigue reconocido, según la evidencia de vencimiento', () => {
+    for (const body of [STORAGE_BASE_ROUTE_REJECTION, '{"statusCode":"401","message":"x"}', '{"statusCode":403}']) {
+      expect(classify(400, body)).toEqual(AUTH_400)
+      expect(classify(400, body, true)).toEqual(EXPIRED_400)
+    }
+    expect(classify(400, '{"statusCode":"403","message":"The provided token has expired."}')).toEqual(EXPIRED_400)
+  })
+
+  it('10 · 401/403 → authorization_error, o expired_token con evidencia (exp local o mensaje)', () => {
+    for (const status of [401, 403]) {
+      expect(classify(status, '')).toEqual({ status: 'authorization_error', httpStatus: status })
+      expect(classify(status, 'Unauthorized')).toEqual({ status: 'authorization_error', httpStatus: status })
+      expect(classify(status, '', true)).toEqual({ status: 'expired_token', httpStatus: status })
+      expect(classify(status, STORAGE_EXPIRED_SIGNATURE_MESSAGE)).toEqual({ status: 'expired_token', httpStatus: status })
+    }
+  })
+
+  it('11 · 400 sin cuerpo (como un HEAD rechazado) → no se inventa un rechazo de credencial', () => {
+    expect(classify(400, '')).toEqual(STORAGE_400)
+    expect(classify(400, '', true)).toEqual(STORAGE_400)
+    expect(classify(400, '   ')).toEqual(STORAGE_400)
+  })
+
+  it(`12 · body enorme: sólo se miran los primeros ${CLASSIFY_BODY_MAX_CHARS} caracteres`, () => {
+    const filler = 'x'.repeat(5 * 1024 * 1024)
+    expect(classify(400, `Invalid signature\n${filler}`)).toEqual(AUTH_400)
+    expect(classify(400, `${filler}\nInvalid signature`)).toEqual(STORAGE_400)
+    // En el borde: entra entero → cuenta; cortado por el límite → no.
+    expect(classify(400, `${'x'.repeat(CLASSIFY_BODY_MAX_CHARS - 18)} Invalid signature`)).toEqual(AUTH_400)
+    expect(classify(400, `${'x'.repeat(CLASSIFY_BODY_MAX_CHARS - 10)} Invalid signature`)).toEqual(STORAGE_400)
+  })
+
+  it('getBody que no devuelve string, o que tira → sin evidencia', () => {
+    const odd = (getBody: () => unknown) => classifyUploadFailure({ originalResponse: { ...res(400), getBody } })
+    expect(odd(() => ({ message: 'Invalid signature' }))).toEqual(STORAGE_400)
+    expect(odd(() => null)).toEqual(STORAGE_400)
+    expect(odd(() => { throw new Error('sin body') })).toEqual(STORAGE_400)
+  })
+
+  it('13 · el resultado nunca lleva el body, el token ni URLs', () => {
+    const body = `Invalid signature for ${TOKEN} at ${SIGNED_ENDPOINT}/c2Vzc2lvbg`
+    for (const tokenExpired of [false, true]) {
+      const serialized = JSON.stringify(classify(400, body, tokenExpired))
+      for (const secret of [TOKEN, 'supabase.co', 'c2Vzc2lvbg', 'Invalid signature']) expect(serialized).not.toContain(secret)
+    }
+  })
+})
+
+describe('regresión 2B1.2: POST /sign → HTTP 400 text/plain "Invalid Compact JWS"', () => {
+  /** Copia CONGELADA del classifier anterior a 2B1.3: sólo 401/403 o JSON con statusCode 401/403. */
+  function classifyBefore2B13(httpStatus: number, body: string): 'authorization_error' | 'storage_error' {
+    let jsonCredential = false
+    try {
+      const statusCode: unknown = JSON.parse(body)?.statusCode
+      jsonCredential = statusCode === '401' || statusCode === '403' || statusCode === 401 || statusCode === 403
+    } catch {
+      jsonCredential = false
+    }
+    return httpStatus === 401 || httpStatus === 403 || (httpStatus === 400 && jsonCredential) ? 'authorization_error' : 'storage_error'
+  }
+
+  it('antes quedaba storage_error; ahora, con el token vigente, authorization_error (0 bytes enviados)', async () => {
+    expect(classifyBefore2B13(400, STORAGE_SIGNED_ROUTE_REJECTION.notCompactJws)).toBe('storage_error') // el bug
+
+    const result = await uploader({ signedUploadToken: 'no-es-un-jws' }).start()
+    expect(result).toEqual(AUTH_400)
+    expect(server.requests.map((r) => r.method)).toEqual(['POST'])
+    expect(sentBytes()).toBe(0)
+  })
+
+  it('el mismo bug para cada rechazo medido', () => {
+    for (const body of Object.values(STORAGE_SIGNED_ROUTE_REJECTION)) {
+      expect(classifyBefore2B13(400, body)).toBe('storage_error')
+      expect(classify(400, body)).toEqual(AUTH_400)
+    }
+  })
+})
+
+describe('fake /sign: revalida la firma en cada request, como Storage real', () => {
+  const b64 = (v: string) => Buffer.from(v).toString('base64')
+  async function rawSession(): Promise<string> {
+    const post = server.createRequest('POST', SIGNED_ENDPOINT)
+    post.setHeader('Tus-Resumable', '1.0.0')
+    post.setHeader('Upload-Length', '100')
+    post.setHeader('Upload-Metadata', `bucketName ${b64('property-videos')},objectName ${b64(OBJECT_PATH)}`)
+    post.setHeader('x-signature', TOKEN)
+    const created = await post.send(null)
+    expect(created.getStatus()).toBe(201)
+    return created.getHeader('Location')!
+  }
+  async function send(method: string, url: string, signature: string | null) {
+    const req = server.createRequest(method, url)
+    req.setHeader('Tus-Resumable', '1.0.0')
+    if (signature !== null) req.setHeader('x-signature', signature)
+    if (method === 'PATCH') {
+      req.setHeader('Upload-Offset', '0')
+      req.setHeader('Content-Type', 'application/offset+octet-stream')
+    }
+    const response = await req.send(method === 'PATCH' ? new Blob([new Uint8Array(10)]) : null)
+    return { status: response.getStatus(), body: response.getBody(), offset: response.getHeader('Upload-Offset') }
+  }
+
+  it('HEAD/PATCH/DELETE sin firma, adulterada, no-JWS, de otro objeto o vencida: 400 (HEAD sin cuerpo) y el offset no se mueve', async () => {
+    const session = await rawSession()
+    const bad: Array<[string | null, string]> = [
+      [null, STORAGE_SIGNED_ROUTE_REJECTION.missingSignature],
+      [TOKEN.replace('firma-de-prueba', 'adulterada'), STORAGE_SIGNED_ROUTE_REJECTION.badSignature],
+      ['no-es-un-jws', STORAGE_SIGNED_ROUTE_REJECTION.notCompactJws],
+      [fakeSignedToken(nowSeconds() + 7200, 'otro-tenant/otro.mp4'), STORAGE_SIGNED_ROUTE_REJECTION.otherObject],
+      [fakeSignedToken(nowSeconds() - 60), STORAGE_EXPIRED_JWT_REJECTION],
+    ]
+    for (const [signature, message] of bad) {
+      for (const method of ['HEAD', 'PATCH', 'DELETE']) {
+        expect(await send(method, session, signature)).toMatchObject({ status: 400, body: method === 'HEAD' ? '' : message })
+      }
+    }
+    expect(await send('HEAD', session, TOKEN)).toMatchObject({ status: 200, offset: '0' })
+    expect(await send('PATCH', session, TOKEN)).toMatchObject({ status: 204, offset: '10' })
+    expect(await send('DELETE', session, TOKEN)).toMatchObject({ status: 204 })
+    expect(await send('HEAD', session, TOKEN)).toMatchObject({ status: 404 })
+  })
+
+  it('token válido de OTRO objeto en la creación → authorization_error, 0 bytes', async () => {
+    expect(await uploader({ signedUploadToken: fakeSignedToken(nowSeconds() + 7200, 'otro-tenant/otro.mp4') }).start()).toEqual(AUTH_400)
+    expect(sentBytes()).toBe(0)
+  })
+
+  it('rechazo de firma en un PATCH a mitad de subida (texto plano) → authorization_error, sin reintentos', async () => {
+    server.failNext('PATCH', { kind: 'status', status: 400, body: STORAGE_SIGNED_ROUTE_REJECTION.otherObject })
+    expect(await uploader().start()).toEqual(AUTH_400)
+    expect(server.requestsOf('PATCH')).toHaveLength(1)
+  })
+
+  it('reanudar con el token vencido: HEAD 400 sin cuerpo → se recrea la sesión → POST 400 vencido → expired_token', async () => {
+    server.failNext('PATCH', { kind: 'network' })
+    const upload = uploader({}, { retryDelaysMs: [] })
+    expect(await upload.start()).toEqual({ status: 'network_error' })
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000 + 1000)
+    expect(await upload.start()).toEqual(EXPIRED_400)
+    expect(server.requests.map((r) => r.method)).toEqual(['POST', 'PATCH', 'HEAD', 'POST'])
   })
 })
 

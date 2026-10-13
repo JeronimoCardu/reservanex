@@ -77,13 +77,21 @@
 //   el POST ya estaba en vuelo, Storage puede haber creado una sesión vacía
 //   (0 bytes) que nadie conoce: vence sola.
 //
-// Errores — clasificación conservadora (sin heurísticas sobre el texto):
-//   · credencial rechazada = HTTP 401/403, o el estilo de Storage: HTTP 400
-//     con statusCode "401"/"403" en el body JSON (observado en el smoke 2B0);
-//   · expired_token sólo si, además, el propio token ya venció según su claim
-//     exp (evidencia, no un mensaje); si no, authorization_error. El formato
-//     real de un token vencido todavía no se observó en QA;
-//   · todo otro error HTTP es storage_error.
+// Errores — clasificación conservadora:
+//   · credencial rechazada = HTTP 401/403, o HTTP 400 con evidencia explícita
+//     en el body. /sign rechaza la firma con 400 y el motivo en TEXTO PLANO
+//     ("Missing x-signature header", "signature verification failed",
+//     "Invalid Compact JWS", "Invalid signature": medido en el smoke 2B1.2,
+//     en POST/PATCH/DELETE; HEAD responde 400 sin cuerpo). También se acepta
+//     el estilo JSON {"statusCode":"401"|"403"} (observado en el endpoint base,
+//     smoke 2B0). Un 400 genérico o vacío NO es rechazo de credencial;
+//   · expired_token sólo con evidencia de vencimiento: el propio token ya
+//     venció según su claim exp, o Storage lo dice explícitamente. El mensaje
+//     exacto de un token realmente vencido NO se midió: los patrones salen del
+//     verifier de Storage (jose jwtVerify y ERRORS.ExpiredSignature). Sin esa
+//     evidencia, authorization_error;
+//   · todo otro error HTTP es storage_error. Se miran a lo sumo
+//     CLASSIFY_BODY_MAX_CHARS del body, y el body nunca sale en el resultado.
 //
 // Nada de esto se loguea: ni el token, ni el endpoint, ni la URL de sesión.
 
@@ -117,7 +125,7 @@ export type ResumableUploadStatus =
   | 'uploading'
   | 'success'
   | 'cancelled'
-  | 'expired_token'       // la firma fue rechazada Y el token ya venció: hay que pedir otro a prepare
+  | 'expired_token'       // la firma fue rechazada y hay evidencia de vencimiento (exp del token o Storage lo dice): pedir otro a prepare
   | 'authorization_error' // la firma no fue aceptada (inválida, endpoint equivocado, sin permiso)
   | 'storage_error'       // Storage respondió otro error, o devolvió una URL de sesión fuera del proyecto
   | 'network_error'       // sin respuesta HTTP tras los reintentos
@@ -524,11 +532,11 @@ function shouldRetryUpload(error: DetailedError): boolean {
 }
 
 /**
- * Error de tus-js-client → resultado tipado. Del error sólo se usa el status
- * HTTP y, del body, el statusCode estructurado de Storage; el mensaje —que
- * trae la URL de sesión— no sale de acá. `tokenExpired` es la evidencia de
- * vencimiento (claim exp del token): sin ella, un rechazo de credencial es
- * authorization_error, nunca expired_token.
+ * Error de tus-js-client → resultado tipado. Del error sólo se usan el status
+ * HTTP y los primeros CLASSIFY_BODY_MAX_CHARS del body, para buscar evidencia
+ * de rechazo de credencial; ni el body ni el mensaje —que trae la URL de
+ * sesión— salen de acá. `tokenExpired` es la evidencia LOCAL de vencimiento
+ * (claim exp del token): sirve sólo para la UX, la autoridad es Storage.
  */
 export function classifyUploadFailure(error: unknown, context: { tokenExpired?: boolean } = {}): ResumableUploadResult {
   if (causedBy(error, UploadCancelledError)) return { status: 'cancelled' }
@@ -537,28 +545,80 @@ export function classifyUploadFailure(error: unknown, context: { tokenExpired?: 
   const httpStatus = response?.getStatus() ?? 0
   // Status 0 = el request no tuvo respuesta HTTP (red, CORS, DNS).
   if (!response || !httpStatus) return { status: 'network_error' }
-  if (isCredentialRejection(httpStatus, safeBody(response))) {
-    return context.tokenExpired ? { status: 'expired_token', httpStatus } : { status: 'authorization_error', httpStatus }
+  const evidence = credentialRejectionEvidence(httpStatus, safeBody(response))
+  if (evidence.rejected) {
+    return evidence.expired || context.tokenExpired ? { status: 'expired_token', httpStatus } : { status: 'authorization_error', httpStatus }
   }
   return { status: 'storage_error', httpStatus }
 }
 
-// HTTP 401/403, o el estilo de error de Storage: HTTP 400 con el status real
-// en el body (observado: 400 {"statusCode":"403","code":"AccessDenied",...}).
-function isCredentialRejection(httpStatus: number, body: string): boolean {
-  if (httpStatus === 401 || httpStatus === 403) return true
-  if (httpStatus !== 400) return false
-  try {
-    const statusCode: unknown = JSON.parse(body)?.statusCode
-    return statusCode === '401' || statusCode === '403' || statusCode === 401 || statusCode === 403
-  } catch {
-    return false
-  }
+/** Cuánto del body se mira para clasificar: los mensajes de Storage son cortos; el resto se ignora. */
+export const CLASSIFY_BODY_MAX_CHARS = 2048
+
+// Rechazos de firma en /storage/v1/upload/resumable/sign. MEDIDOS contra
+// Storage real (smoke 2B1.2): HTTP 400 con el mensaje en texto plano, en
+// POST/PATCH/DELETE (HEAD: 400 sin cuerpo). Los dos últimos salen del
+// verifier de Storage (verifyObjectSignature), no se observaron.
+const SIGNATURE_REJECTION_PATTERNS: readonly RegExp[] = [
+  /missing\s+x-signature/i,             // sin header
+  /signature\s+verification\s+failed/i, // firma adulterada (jose)
+  /invalid\s+compact\s+jws/i,           // no es un JWS (jose)
+  /\binvalid\s+signature\b/i,           // token válido de OTRO objeto
+  /\binvalid\s+jwt\b/i,                 // ERRORS.InvalidJWT (mensaje por defecto)
+  /\bnot\s+scoped\s+for\s+upload\b/i,   // token firmado para descarga
+]
+
+// Vencimiento explícito en la respuesta. NO MEDIDO (habría que esperar el
+// vencimiento real del token): Storage verifica con jose jwtVerify, que
+// rechaza un exp vencido con su propio mensaje ANTES que el chequeo explícito
+// de Storage (ERRORS.ExpiredSignature). Se aceptan los dos, más variantes
+// razonables del mismo hecho.
+const EXPIRED_TOKEN_PATTERNS: readonly RegExp[] = [
+  /"?exp"?\s+claim\s+timestamp\s+check\s+failed/i, // jose JWTExpired
+  /provided\s+token\s+has\s+expired/i,             // ERRORS.ExpiredSignature
+  /\b(?:token|jwt|signature)\s+(?:has\s+)?expired\b/i,
+]
+
+type CredentialEvidence = { rejected: false } | { rejected: true; expired: boolean }
+
+/**
+ * ¿La respuesta demuestra un rechazo de credencial? Sí con HTTP 401/403; con
+ * HTTP 400 sólo si el body lo dice explícitamente: un mensaje conocido de
+ * firma/vencimiento (texto plano, el formato real de /sign), o el statusCode
+ * 401/403 del estilo JSON de Storage (observado en el endpoint base, smoke
+ * 2B0). Un 400 cualquiera —o vacío— no es rechazo de credencial. Otros status
+ * nunca lo son, diga lo que diga el body.
+ */
+function credentialRejectionEvidence(httpStatus: number, body: string): CredentialEvidence {
+  if (httpStatus !== 400 && httpStatus !== 401 && httpStatus !== 403) return { rejected: false }
+  const { statusCode, text } = readStorageError(body)
+  const expired = EXPIRED_TOKEN_PATTERNS.some((p) => p.test(text))
+  if (httpStatus !== 400) return { rejected: true, expired }
+  const signature = SIGNATURE_REJECTION_PATTERNS.some((p) => p.test(text))
+  return signature || expired || statusCode === 401 || statusCode === 403 ? { rejected: true, expired } : { rejected: false }
 }
 
+/** Texto plano (el real de /sign) o JSON {statusCode, message, error, code}, sin confiar en el Content-Type. */
+function readStorageError(body: string): { statusCode: number | null; text: string } {
+  try {
+    const parsed: unknown = JSON.parse(body)
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const fields = parsed as Record<string, unknown>
+      const code = Number(fields.statusCode)
+      const text = [fields.message, fields.error, fields.code].filter((v): v is string => typeof v === 'string').join(' ')
+      return { statusCode: Number.isInteger(code) ? code : null, text }
+    }
+  } catch {
+    // no es JSON: texto plano
+  }
+  return { statusCode: null, text: body }
+}
+
+/** Body acotado: nunca se procesa más que CLASSIFY_BODY_MAX_CHARS. */
 function safeBody(response: HttpResponse): string {
   try {
-    return String(response.getBody() ?? '')
+    const body: unknown = response.getBody()
+    return typeof body === 'string' ? body.slice(0, CLASSIFY_BODY_MAX_CHARS) : ''
   } catch {
     return ''
   }
