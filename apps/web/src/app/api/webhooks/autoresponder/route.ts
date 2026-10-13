@@ -4,6 +4,7 @@ import {
   handleAutoResponderWebhook,
   type AutoResponderWebhookDeps,
 } from '@/lib/autoresponder-webhook'
+import { failPendingAutoResponderRow } from '@/lib/autoresponder-queue'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -127,6 +128,10 @@ export async function POST(req: NextRequest) {
       // Never throws: every failure (missing config, network error,
       // timeout, non-2xx, malformed body) resolves to null, which the pure
       // handler above turns into a safe {replies:[]}.
+      // MVP P0-A — every path where the worker did NOT take the row ends it
+      // 'failed' with a closed reason (failPendingAutoResponderRow, guarded by
+      // status='pending'): the generic poller no longer claims AutoResponder
+      // rows, so a 'pending' one would otherwise stay pending forever.
       async processSync({ queueItemId, tenantId, accountId }) {
         const workerUrl = process.env.WORKER_INTERNAL_URL
         const secret     = process.env.WORKER_INTERNAL_SECRET
@@ -135,14 +140,16 @@ export async function POST(req: NextRequest) {
           console.error('[webhook:autoresponder] WORKER_INTERNAL_URL/WORKER_INTERNAL_SECRET not configured — cannot process synchronously', {
             tenantId, accountId,
           })
+          await failPendingAutoResponderRow(admin, queueItemId, 'sync_not_configured')
           return null
         }
 
         const budgetMs = Number(process.env.AUTORESPONDER_SYNC_TIMEOUT_MS ?? DEFAULT_SYNC_TIMEOUT_MS)
         const fetchTimeoutMs = budgetMs + FETCH_TIMEOUT_BUFFER_MS
 
+        let res: Response
         try {
-          const res = await fetch(`${workerUrl.replace(/\/$/, '')}${INTERNAL_PROCESS_PATH}`, {
+          res = await fetch(`${workerUrl.replace(/\/$/, '')}${INTERNAL_PROCESS_PATH}`, {
             method:  'POST',
             headers: {
               'content-type':           'application/json',
@@ -151,23 +158,36 @@ export async function POST(req: NextRequest) {
             body:   JSON.stringify({ queueItemId }),
             signal: AbortSignal.timeout(fetchTimeoutMs),
           })
-
-          if (!res.ok) {
-            console.error('[webhook:autoresponder] worker internal call returned non-OK status', { status: res.status, queueItemId })
-            return null
-          }
-
-          const data = (await res.json()) as { replyText?: unknown; outcome?: unknown }
-          console.log('[webhook:autoresponder] worker internal call completed', { queueItemId, outcome: data.outcome })
-          return { replyText: typeof data.replyText === 'string' ? data.replyText : null }
         } catch (err) {
           const isTimeout = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
           console.error('[webhook:autoresponder] worker internal call failed', {
             queueItemId,
             reason: isTimeout ? 'timeout' : (err instanceof Error ? err.message : String(err)),
           })
+          await failPendingAutoResponderRow(admin, queueItemId, isTimeout ? 'sync_worker_timeout' : 'sync_worker_unreachable')
           return null
         }
+
+        if (!res.ok) {
+          console.error('[webhook:autoresponder] worker internal call returned non-OK status', { status: res.status, queueItemId })
+          await failPendingAutoResponderRow(admin, queueItemId, 'sync_worker_http_error', `HTTP ${res.status}`)
+          return null
+        }
+
+        const data = (await res.json().catch(() => null)) as { replyText?: unknown; outcome?: unknown } | null
+        if (!data || typeof data !== 'object') {
+          console.error('[webhook:autoresponder] worker internal call returned a malformed body', { queueItemId })
+          await failPendingAutoResponderRow(admin, queueItemId, 'sync_worker_bad_response')
+          return null
+        }
+
+        console.log('[webhook:autoresponder] worker internal call completed', { queueItemId, outcome: data.outcome })
+        if (data.outcome === 'error_not_found') {
+          // The worker could not claim the row. If it is still 'pending' (the
+          // claim UPDATE itself failed), nobody else will ever take it.
+          await failPendingAutoResponderRow(admin, queueItemId, 'sync_claim_failed')
+        }
+        return { replyText: typeof data.replyText === 'string' ? data.replyText : null }
       },
     }
 

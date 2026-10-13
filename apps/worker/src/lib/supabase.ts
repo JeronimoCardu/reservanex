@@ -34,10 +34,10 @@ type QueueRow = Database['public']['Tables']['message_queue']['Row']
 //      testing instances) — under that reality, one worker's startup
 //      recovery could reset a row a DIFFERENT, still-legitimately-running
 //      worker instance was mid-processing, and claimQueueItem()'s
-//      SELECT-then-UPDATE claim (not a single atomic RPC, unlike
-//      messaging_outbox/media_events) does not fully close the resulting
-//      race — the reset row becomes claimable again while the original run
-//      is still in flight, risking genuine concurrent double-processing.
+//      SELECT-then-UPDATE claim of that time (atomic RPC since MVP P0-A)
+//      did not fully close the resulting race — the reset row became
+//      claimable again while the original run was still in flight, risking
+//      genuine concurrent double-processing.
 //
 //   2. Resetting to 'pending' (for attempts<3) specifically reintroduces
 //      that same row into the claimable pool for a RETRY — amplifying the
@@ -99,61 +99,26 @@ export async function recoverProcessingItems(): Promise<void> {
   }
 }
 
+// MVP P0-A — claim del poller GENÉRICO: atómico (FOR UPDATE SKIP LOCKED, en
+// la RPC) y SIN filas de AutoResponder. AutoResponder sólo puede responder
+// dentro del request HTTP del webhook, así que sus filas se procesan
+// exclusivamente por el camino síncrono (claimQueueItemById, más abajo).
+// Antes esto era un SELECT de "la pendiente más vieja" + UPDATE, sin filtro de
+// proveedor: si el tick del poller caía entre el INSERT del webhook y el claim
+// síncrono, el poller se llevaba la fila, la respuesta se generaba sin nadie
+// que la entregara y el webhook contestaba vacío.
 export async function claimQueueItem(): Promise<QueueRow | null> {
   const supabase = createClient()
 
-  // Find oldest pending item within retry budget
-  const { data: items, error: selectError } = await supabase
-    .from('message_queue')
-    .select('id')
-    .eq('status', 'pending')
-    .lt('attempts', 3)
-    .order('created_at', { ascending: true })
-    .limit(1)
+  const { data, error } = await supabase.rpc('claim_next_pollable_message_queue_item')
 
-  if (selectError) {
-    // Previously swallowed silently — poll() would just see "nothing to
-    // claim" on a genuine query failure (RLS, connection, etc.) with no
-    // signal at all. Never logs raw error details beyond the message/code
-    // Supabase itself returns (no row content, no secrets).
-    console.error('[poller] claimQueueItem select error', { code: selectError.code, message: selectError.message })
-    return null
-  }
-  if (!items || items.length === 0) return null
-
-  const id = items[0].id
-
-  // Optimistic claim: only succeeds if the row is still 'pending'
-  // (guards against two poll cycles racing in the same process, or two
-  // concurrent worker processes racing on the same row — the latter is a
-  // real possibility this claim step does not fully close, since it is a
-  // SELECT-then-UPDATE rather than the single atomic RPC used by
-  // messaging_outbox/media_events; a lost race here is expected and
-  // harmless — the row stays 'pending' and is retried on the next tick).
-  const { data, error: updateError } = await supabase
-    .from('message_queue')
-    .update({
-      status: 'processing',
-      processing_started_at: new Date().toISOString(),
-    })
-    .eq('id', id)
-    .eq('status', 'pending')
-    .select()
-    .single()
-
-  if (updateError) {
-    // .single() errors when the UPDATE affects 0 rows (another poller
-    // already claimed it first) — that specific case is a normal, expected
-    // race outcome, not a real error, so it stays quiet. Anything else
-    // (PGRST116 is the "0/2+ rows" code; any other code is a genuine
-    // failure) gets logged so a real claim error is never silent.
-    if (updateError.code !== 'PGRST116') {
-      console.error('[poller] claimQueueItem update error', { code: updateError.code, message: updateError.message })
-    }
+  if (error) {
+    // Never logs raw row content or secrets — only what Supabase returns.
+    console.error('[poller] claimQueueItem rpc error', { code: error.code, message: error.message })
     return null
   }
 
-  return data
+  return (data as QueueRow[] | null)?.[0] ?? null
 }
 
 // Fase 1 (AutoResponder sin MacroDroid) — claims ONE SPECIFIC row by id,
@@ -197,7 +162,11 @@ export async function completeQueueItem(id: string): Promise<void> {
     .eq('id', id)
 }
 
-export async function failQueueItem(id: string, error: string): Promise<void> {
+// `terminal`: MVP P0-A — una fila de AutoResponder que falló en el camino
+// síncrono ya no puede responder (el request HTTP que esperaba la respuesta se
+// cerró) y el poller no la reclama: volver a 'pending' la dejaría pendiente
+// para siempre. Con terminal=true queda 'failed' con su last_error, de una.
+export async function failQueueItem(id: string, error: string, options: { terminal?: boolean } = {}): Promise<void> {
   const supabase = createClient()
 
   // Read current attempts to increment
@@ -210,8 +179,8 @@ export async function failQueueItem(id: string, error: string): Promise<void> {
   const attempts = (row?.attempts ?? 0) + 1
 
   // If under retry budget → back to pending so it will be retried
-  // If exhausted → mark as failed permanently
-  const status = attempts >= 3 ? 'failed' : 'pending'
+  // If exhausted (or terminal) → mark as failed permanently
+  const status = options.terminal || attempts >= 3 ? 'failed' : 'pending'
 
   await supabase
     .from('message_queue')

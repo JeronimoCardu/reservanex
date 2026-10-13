@@ -37,13 +37,21 @@ export interface ProcessSyncDeps {
   claimQueueItemById(id: string): Promise<QueueRow | null>
   processMessage(item: QueueRow, syncOptions: { timeoutMs: number }): Promise<ProcessMessageSyncResult | void>
   completeQueueItem(id: string): Promise<void>
+  /**
+   * MVP P0-A — TERMINAL: deja la fila 'failed' con `error` en last_error. Una
+   * fila de este camino ya no puede responder después de cerrado el request,
+   * y el poller genérico no la reclama: nada de volver a 'pending'.
+   */
   failQueueItem(id: string, error: string): Promise<void>
 }
+
+/** last_error de una fila cuyo presupuesto síncrono se agotó: la respuesta ya no se puede entregar. */
+export const SYNC_TIMEOUT_ERROR = 'sync_timeout: presupuesto síncrono agotado, respuesta no entregada'
 
 export type ProcessSyncOutcome =
   | 'ok_replied'          // AI generated a reply within the budget
   | 'ok_silent'           // AI ran within the budget and produced no reply (manual mode, deferred audio, etc.)
-  | 'ok_timeout'          // budget exceeded — processing continues in the background, falls back to messaging_outbox if it eventually replies
+  | 'ok_timeout'          // budget exceeded — nothing can be delivered anymore; the row ends 'failed' (SYNC_TIMEOUT_ERROR)
   | 'error_not_found'     // queueItemId not claimable (already claimed by the async poller, or unknown id) — safe no-op
   | 'error_processing'    // processMessage threw before the timeout fired
   | 'rejected_bad_request' // auth or payload validation failed
@@ -117,25 +125,35 @@ export async function handleProcessSync(params: {
       queueItemId: item.id,
       timeoutMs,
     })
-    // resultPromise keeps running after this function returns. Once it
-    // settles, dispatchOutboundReply will see the deadline has passed and
-    // fall back to messaging_outbox (the only delivery path left at that
-    // point) — bookkeep the queue row's terminal status either way.
+    // resultPromise keeps running after this function returns. Whatever it
+    // generates can no longer be delivered (deliverAIReply refuses a reply
+    // past its deadline, and there is no other AutoResponder transport), so
+    // the row ends TERMINAL and diagnosable: 'failed' + why.
     resultPromise
-      .then(() => deps.completeQueueItem(item.id))
+      .then(() => deps.failQueueItem(item.id, SYNC_TIMEOUT_ERROR))
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err)
         console.error('[internal-server] background processMessage (post-timeout) failed', { queueItemId: item.id, error: message })
-        return deps.failQueueItem(item.id, message)
+        return deps.failQueueItem(item.id, `${SYNC_TIMEOUT_ERROR} (${message})`)
       })
       .catch(() => undefined)
 
     return { httpStatus: 200, body: { replyText: null, outcome: 'ok_timeout' }, outcome: 'ok_timeout' }
   }
 
+  // The pipeline itself can notice the budget ran out (its own abort fired
+  // first): same terminal outcome as the race above.
+  if (winner?.reason === 'deadline_exceeded') {
+    await deps.failQueueItem(item.id, SYNC_TIMEOUT_ERROR)
+    return { httpStatus: 200, body: { replyText: null, outcome: 'ok_timeout' }, outcome: 'ok_timeout' }
+  }
+
   await deps.completeQueueItem(item.id)
   const replyText = winner?.replyText ?? null
   const outcome: ProcessSyncOutcome = replyText ? 'ok_replied' : 'ok_silent'
+  if (!replyText && winner?.reason) {
+    console.log('[internal-server] silent by design', { queueItemId: item.id, reason: winner.reason })
+  }
   return { httpStatus: 200, body: { replyText, outcome }, outcome }
 }
 
@@ -146,6 +164,18 @@ function readRequestBody(req: IncomingMessage): Promise<string> {
     req.on('end', () => resolve(data))
     req.on('error', reject)
   })
+}
+
+// Real deps of the sync path. Every failure here is TERMINAL (MVP P0-A): an
+// AutoResponder row can no longer answer once its HTTP request is closed, and
+// the generic poller never claims it — back to 'pending' would mean forever.
+export function createInternalServerDeps(): ProcessSyncDeps {
+  return {
+    claimQueueItemById,
+    processMessage,
+    completeQueueItem,
+    failQueueItem: (id, error) => failQueueItem(id, error, { terminal: true }),
+  }
 }
 
 // Thin node:http adapter — real deps, real request parsing, translates
@@ -164,7 +194,7 @@ export function startInternalServer(): void {
     )
   }
 
-  const deps: ProcessSyncDeps = { claimQueueItemById, processMessage, completeQueueItem, failQueueItem }
+  const deps = createInternalServerDeps()
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     if (req.method !== 'POST' || req.url !== INTERNAL_PROCESS_PATH) {

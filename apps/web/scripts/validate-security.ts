@@ -199,7 +199,7 @@ async function main(): Promise<void> {
 
     // ═══ E. claim_ai_auto_reply_slot — anon blocked ════════════════════════
     {
-      const { error } = await anon.rpc('claim_ai_auto_reply_slot', { p_conversation_id: A.conversationId, p_tenant_id: A.tenantId })
+      const { error } = await anon.rpc('claim_ai_auto_reply_slot', { p_conversation_id: A.conversationId, p_tenant_id: A.tenantId, p_inbound_message_id: crypto.randomUUID() })
       if (error) ok(`E. claim_ai_auto_reply_slot: anon RPC call rejected (${error.message})`)
       else nok('E. claim_ai_auto_reply_slot: anon RPC call SUCCEEDED — cross-tenant write via unauthenticated RPC')
     }
@@ -209,16 +209,16 @@ async function main(): Promise<void> {
     //        regardless of who the authenticated caller is. ════════════════
     {
       const asA = await signInAs(A.ownerEmail, A.ownerPassword)
-      const { error } = await asA.rpc('claim_ai_auto_reply_slot', { p_conversation_id: A.conversationId, p_tenant_id: A.tenantId })
+      const { error } = await asA.rpc('claim_ai_auto_reply_slot', { p_conversation_id: A.conversationId, p_tenant_id: A.tenantId, p_inbound_message_id: crypto.randomUUID() })
       if (error) ok(`F. claim_ai_auto_reply_slot: authenticated (real tenant A owner, own tenant/conversation) RPC call rejected (${error.message})`)
       else nok('F. claim_ai_auto_reply_slot: authenticated tenant owner call SUCCEEDED — should be service-role only')
     }
 
     // ═══ G. service-role legitimate call works — the real worker path ═════
     {
-      const { data, error } = await admin.rpc('claim_ai_auto_reply_slot', { p_conversation_id: A.conversationId, p_tenant_id: A.tenantId })
+      const { data, error } = await admin.rpc('claim_ai_auto_reply_slot', { p_conversation_id: A.conversationId, p_tenant_id: A.tenantId, p_inbound_message_id: crypto.randomUUID() })
       const row = Array.isArray(data) ? data[0] : data
-      if (!error && row?.claimed === true && row?.new_count === 1) {
+      if (!error && row?.outcome === 'claimed' && row?.new_count === 1) {
         ok('G. claim_ai_auto_reply_slot: service-role call succeeds and correctly claims the first slot (new_count=1)')
       } else {
         nok('G. service-role legitimate call did not behave as expected', `error=${error?.message} data=${JSON.stringify(data)}`)
@@ -230,10 +230,10 @@ async function main(): Promise<void> {
     //        B's tenant_id. ═══════════════════════════════════════════════
     {
       const { data: beforeB } = await admin.from('conversations').select('ai_auto_replies_count').eq('id', B.conversationId).single()
-      const { data, error } = await admin.rpc('claim_ai_auto_reply_slot', { p_conversation_id: A.conversationId, p_tenant_id: B.tenantId })
+      const { data, error } = await admin.rpc('claim_ai_auto_reply_slot', { p_conversation_id: A.conversationId, p_tenant_id: B.tenantId, p_inbound_message_id: crypto.randomUUID() })
       const { data: afterB } = await admin.from('conversations').select('ai_auto_replies_count').eq('id', B.conversationId).single()
       const row = Array.isArray(data) ? data[0] : data
-      if (!error && row?.claimed === false && beforeB?.ai_auto_replies_count === afterB?.ai_auto_replies_count) {
+      if (!error && row?.outcome === 'not_found' && beforeB?.ai_auto_replies_count === afterB?.ai_auto_replies_count) {
         ok('H. Mismatched (conversation A, tenant B) pair → claimed=false, and tenant B\'s real conversation counter is untouched')
       } else {
         nok('H. Mismatched tenant/conversation pair behaved unexpectedly', `error=${error?.message} data=${JSON.stringify(data)} beforeB=${JSON.stringify(beforeB)} afterB=${JSON.stringify(afterB)}`)

@@ -41,6 +41,7 @@
     "validate:permissions": "tsx scripts/validate-permissions.ts",
     "validate:property-video-uploads": "tsx scripts/validate-property-video-uploads.ts",
     "validate:property-video-storage": "tsx scripts/validate-property-video-storage.ts",
+    "validate:autoresponder-stability": "tsx scripts/validate-autoresponder-stability.ts",
     "lab:db-readonly": "tsx scripts/lab/lab-db-readonly.ts",
     "lab:db-exec": "tsx scripts/lab/lab-db-exec.ts",
     "lab:db-push": "tsx scripts/lab/lab-db-push.ts",

@@ -246,15 +246,26 @@ async function runAIPipeline(ctx: MessageContext, signal?: AbortSignal): Promise
     return
   }
 
-  // ── AI auto-reply cycle limit ────────────────────────────────────────────────
-  // Atomically claim one slot for this AI reply. The RPC increments the counter
-  // only if: (a) conversation is still 'autonomous', AND (b) count < limit.
-  // If two workers race on the same conversation, only one wins the UPDATE.
-  type SlotRow = { claimed: boolean; new_count: number; reply_limit: number; is_last: boolean }
+  // ── AI auto-reply slot: sesión de 8 h + fusible (MVP P0-A) ────────────────────
+  // La RPC, con la conversación bloqueada, decide todo junto:
+  //   · inbound >= 8 h después del último inbound que pasó por acá → sesión
+  //     nueva (contador a 1, 'claimed', session_reset);
+  //   · contador < límite → 'claimed' (respuestas 1..límite son normales);
+  //   · contador == límite → 'fuse_tripped': ESTE es el intento siguiente a la
+  //     última respuesta permitida. La RPC ya dejó la conversación en HUMAN
+  //     (estado ANTES del mensaje: Fase 2B §8) y se lo devuelve a un solo
+  //     llamador; cualquier concurrente ve 'not_autonomous';
+  //   · no autónoma / inexistente → silencio.
+  // El bot desactivado nunca llega hasta acá (processMessage corta antes).
+  const fuseHumanUntil = handoffModeForProvider(ctx.provider) === 'temporary'
+    ? computeHumanUntilIso(Date.now(), getHumanHandoffTimeoutMs())
+    : null
   const { data: slotRows, error: slotErr } = await supabase
     .rpc('claim_ai_auto_reply_slot', {
-      p_conversation_id: ctx.conversationId,
-      p_tenant_id:       ctx.tenantId,
+      p_conversation_id:    ctx.conversationId,
+      p_tenant_id:          ctx.tenantId,
+      p_inbound_message_id: ctx.messageId,
+      p_human_until:        fuseHumanUntil ?? undefined,
     })
 
   if (slotErr) {
@@ -265,86 +276,41 @@ async function runAIPipeline(ctx: MessageContext, signal?: AbortSignal): Promise
       error:          slotErr.message,
     })
   } else {
-    const slot = (slotRows as SlotRow[] | null)?.[0]
+    const slot = slotRows?.[0]
 
-    if (!slot?.claimed) {
-      // Already at limit or conversation switched to manual between enqueue and now.
-      // Ensure manual mode + human attention are set (idempotent).
-      const atLimitNowMs = Date.now()
-      await supabase
-        .from('conversations')
-        .update({
-          ai_mode:                      'manual',
-          needs_human_attention:        true,
-          human_attention_requested_at: new Date(atLimitNowMs).toISOString(),
-          // Fase 2B correction — the sliding window is AutoResponder-only.
-          // Meta keeps its pre-2B semantics: manual, no auto-revert.
-          human_until:                  handoffModeForProvider(ctx.provider) === 'temporary'
-            ? computeHumanUntilIso(atLimitNowMs, getHumanHandoffTimeoutMs())
-            : null,
-        })
-        .eq('id', ctx.conversationId)
-        .eq('tenant_id', ctx.tenantId)
-        .eq('ai_mode', 'autonomous')  // only update if still autonomous (guard)
-
-      console.log('[processor:slot] at limit — no AI reply', {
-        conversationId: ctx.conversationId,
-        count:          slot?.new_count ?? '?',
-        limit:          slot?.reply_limit ?? '?',
-      })
-      return
-    }
-
-    if (slot.is_last) {
-      // This is the final slot (count == limit). Send the fixed handoff message.
-      // Do NOT call the LLM — the handoff text is deterministic.
+    if (slot?.outcome === 'fuse_tripped') {
+      // Deterministic — no LLM. The HUMAN state is already committed.
       const handoffResult: LLMResult = {
         text:             HUMAN_HANDOFF_MESSAGE,
         finishReason:     'auto_reply_limit',
         model:            'system',
         handoffRequested: true,
       }
-
-      // Fase 2B §8 — fail-safe ordering: commit the HUMAN state BEFORE the
-      // customer is told a human is coming. If delivery then fails, the
-      // conversation is merely silent (recoverable, and a human is already
-      // flagged for it). The reverse order risks telling the customer "an
-      // advisor will contact you" and then, because the UPDATE failed,
-      // having the AI answer their next message on top of the human.
-      const limitNowMs = Date.now()
-      await supabase
-        .from('conversations')
-        .update({
-          ai_mode:                      'manual',
-          needs_human_attention:        true,
-          human_attention_requested_at: new Date(limitNowMs).toISOString(),
-          ai_handoff_reason:            'auto_reply_limit',
-          ai_handoff_at:                new Date(limitNowMs).toISOString(),
-          // Fase 2B correction — AutoResponder-only sliding window (§20).
-          human_until:                  handoffModeForProvider(ctx.provider) === 'temporary'
-            ? computeHumanUntilIso(limitNowMs, getHumanHandoffTimeoutMs())
-            : null,
-        })
-        .eq('id', ctx.conversationId)
-        .eq('tenant_id', ctx.tenantId)
-
       const { aiMessageId, dispatch: dispatchInfo } = await deliverAIReply(ctx, handoffResult)
 
-      console.log('[processor:slot] limit reached — handoff message sent', {
-        conversationId:  ctx.conversationId,
-        count:           slot.new_count,
-        limit:           slot.reply_limit,
+      console.log('[processor:slot] fusible — mensaje de handoff', {
+        conversationId: ctx.conversationId,
+        count:          slot.new_count,
+        limit:          slot.reply_limit,
         aiMessageId,
-        dispatch:        dispatchInfo,
+        dispatch:       dispatchInfo,
       })
       return
     }
 
-    // Slot claimed and not the last one — proceed with normal AI flow.
+    if (slot?.outcome !== 'claimed') {
+      console.log('[processor:slot] sin slot — sin respuesta', {
+        conversationId: ctx.conversationId,
+        outcome:        slot?.outcome ?? 'no_row',
+      })
+      return
+    }
+
     console.log('[processor:slot] slot claimed', {
       conversationId: ctx.conversationId,
       count:          slot.new_count,
       limit:          slot.reply_limit,
+      sessionReset:   slot.session_reset,
     })
   }
 
@@ -518,8 +484,38 @@ async function applyHumanHandoffGate(ctx: MessageContext): Promise<'silent' | 'c
 export interface ProcessMessageSyncOptions {
   timeoutMs: number
 }
+/**
+ * `reason` explica un silencio que no es "no había nada que decir":
+ *   bot_disabled      → el tenant tiene la IA generativa desactivada (ai_settings.active =
+ *                       false) y este mensaje sólo podía contestarlo el bot (no era una
+ *                       confirmación determinística, que sigue funcionando);
+ *   deadline_exceeded → el presupuesto síncrono se agotó: lo que se haya
+ *                       generado ya no puede entregarse en este request.
+ */
 export interface ProcessMessageSyncResult {
   replyText: string | null
+  reason?:   'bot_disabled' | 'deadline_exceeded'
+}
+
+// MVP P0-A — "Bot activo" del tenant (ai_settings.active), con la misma
+// semántica que el responder: sin fila → activo; error de lectura → activo
+// (el responder vuelve a mirar antes de gastar un token, como siempre).
+async function isBotEnabled(ctx: MessageContext): Promise<boolean> {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('ai_settings')
+    .select('active')
+    .eq('tenant_id', ctx.tenantId)
+    .maybeSingle()
+
+  if (error) {
+    console.warn('[processor] could not read ai_settings.active — treating as enabled', {
+      tenantId: ctx.tenantId,
+      error:    error.message,
+    })
+    return true
+  }
+  return !data || data.active !== false
 }
 
 export async function processMessage(
@@ -538,8 +534,12 @@ export async function processMessage(
     setTimeout(() => controller.abort(new Error('autoresponder_sync_budget_exceeded')), syncOptions.timeoutMs)
     abortSignal = controller.signal
   }
-  const finish = (): ProcessMessageSyncResult | void =>
-    syncOptions ? { replyText: ctx.syncReply?.captured ?? null } : undefined
+  const finish = (reason?: ProcessMessageSyncResult['reason']): ProcessMessageSyncResult | void => {
+    if (!syncOptions) return undefined
+    const replyText = ctx.syncReply?.captured ?? null
+    const deadlineExceeded = replyText === null && ctx.syncReply !== undefined && Date.now() >= ctx.syncReply.deadlineAtMs
+    return { replyText, reason: reason ?? (deadlineExceeded ? 'deadline_exceeded' : undefined) }
+  }
 
   // ── Fase 2B: HUMAN handoff gate ─────────────────────────────────────────────
   // Runs BEFORE any media handling on purpose (§18): while a human is
@@ -651,6 +651,28 @@ export async function processMessage(
     }
   }
 
+  // ── MVP P0-A.1: "Bot desactivado" = IA generativa desactivada ────────────────
+  // NO es "ReservaNex en silencio": las confirmaciones determinísticas de
+  // formularios y pedidos (SUB-…) son parte de una operación del negocio y
+  // siguen funcionando con el bot apagado, sin slot ni contador.
+  //
+  // Lo que se calla con el bot apagado es todo lo que habla COMO el bot: la
+  // respuesta fija de media no soportada, el aviso de audio sin transcribir
+  // (Meta) y el pipeline de IA —con su slot, su contador y su fusible—. El
+  // chequeo se hace justo antes de cada una de esas respuestas, nunca antes de
+  // la puerta HUMAN (su precedencia no cambia) ni de los handlers
+  // determinísticos. Una sola lectura de ai_settings por mensaje, y sólo si
+  // hace falta: un mensaje que resuelve una confirmación no la lee.
+  let botEnabledRead: Promise<boolean> | null = null
+  const botDisabled = async (): Promise<boolean> => !(await (botEnabledRead ??= isBotEnabled(ctx)))
+  const silentBecauseBotDisabled = () => {
+    console.log('[processor] bot desactivado (IA generativa) — el bot no responde este mensaje', {
+      conversationId: ctx.conversationId,
+      tenantId:       ctx.tenantId,
+    })
+    return finish('bot_disabled')
+  }
+
   // ── AutoResponder media (Fase 1B — sin MacroDroid) ────────────────────────────
   // AutoResponder's "Web Server" trigger never gives real bytes at webhook
   // time — only a placeholder (see providers/autoresponder/media-parser.ts).
@@ -666,6 +688,9 @@ export async function processMessage(
   // visibility; only the real file extraction is the capability we don't
   // have without MacroDroid.
   if (ctx.provider === 'autoresponder' && ctx.mediaType) {
+    // Habla como el bot ("no puedo procesar audios"): con el bot apagado, la
+    // persona que atiende WhatsApp ve el archivo ella misma.
+    if (await botDisabled()) return silentBecauseBotDisabled()
     await respondMediaNotSupported(ctx, ctx.mediaType)
     return finish()
   }
@@ -678,6 +703,7 @@ export async function processMessage(
       ctx.messageText = audioTranscriptionText
       // Fall through to runAIPipeline below
     } else {
+      if (await botDisabled()) return silentBecauseBotDisabled()
       await handleAudioTranscriptionFailure(ctx)
       return finish()
     }
@@ -724,6 +750,11 @@ export async function processMessage(
     })
     return finish()
   }
+
+  // Mensaje libre: sólo la IA podría contestarlo. Con el bot apagado no se
+  // entra al pipeline — sin slot, sin contador, sin fusible, sin Atención
+  // Humana por límite.
+  if (await botDisabled()) return silentBecauseBotDisabled()
 
   try {
     await runAIPipeline(ctx, abortSignal)

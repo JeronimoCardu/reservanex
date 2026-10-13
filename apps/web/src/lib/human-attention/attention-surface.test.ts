@@ -186,9 +186,18 @@ describe('4 y 3. quién resuelve la atención humana', () => {
   })
 
   it('los handoffs reales sí abren ciclo (escriben requested_at)', () => {
-    for (const f of ['apps/worker/src/tools/escalate-to-human.ts', 'apps/worker/src/tools/send-payment-data.ts', 'apps/worker/src/processor.ts']) {
+    for (const f of ['apps/worker/src/tools/escalate-to-human.ts', 'apps/worker/src/tools/send-payment-data.ts']) {
       expect(soloCodigo(leer(f)), f).toContain('human_attention_requested_at')
     }
+  })
+
+  it('el fusible de auto-respuestas abre ciclo DENTRO de la RPC (MVP P0-A), y el worker delega en ella', () => {
+    const sql = leer('supabase/migrations/20261013000001_autoresponder_reply_sessions.sql')
+      .split('\n').filter((l) => !l.trim().startsWith('--')).join('\n')
+    const fusible = sql.slice(sql.indexOf('IF NOT v_new_session AND v_count >= v_limit THEN'), sql.indexOf("'fuse_tripped'::text"))
+    expect(fusible).toContain('human_attention_requested_at = now()')
+    expect(fusible).toContain("ai_handoff_reason            = 'auto_reply_limit'")
+    expect(soloCodigo(leer('apps/worker/src/processor.ts'))).toContain("slot?.outcome === 'fuse_tripped'")
   })
 })
 

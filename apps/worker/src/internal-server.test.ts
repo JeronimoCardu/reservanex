@@ -3,10 +3,16 @@
 // providers/autoresponder/webhook-handler.test.ts: no real HTTP server, no
 // real DB, no real LLM call — deps are stub functions.
 import { describe, expect, it, vi } from 'vitest'
-import { handleProcessSync, type ProcessSyncDeps } from './internal-server'
+import { SYNC_TIMEOUT_ERROR, createInternalServerDeps, handleProcessSync, type ProcessSyncDeps } from './internal-server'
 import type { Database } from '@orderflow/types'
 
 type QueueRow = Database['public']['Tables']['message_queue']['Row']
+
+// Sólo para createInternalServerDeps: el resto del archivo inyecta sus deps.
+vi.mock('./lib/supabase', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./lib/supabase')>()),
+  failQueueItem: vi.fn(async () => undefined),
+}))
 
 const SECRET = 'internal-secret-for-tests'
 
@@ -118,15 +124,17 @@ describe('handleProcessSync — timeout (Fase 1 §10/§11)', () => {
 
     expect(result.body).toEqual({ replyText: null, outcome: 'ok_timeout' })
     expect(elapsed).toBeLessThan(1000) // responded at ~timeoutMs, not waiting for `slow`
-    expect(deps.completeQueueItem).not.toHaveBeenCalled() // not yet — still pending
+    expect(deps.failQueueItem).not.toHaveBeenCalled() // not yet — still running
 
-    // Once the slow call eventually finishes, bookkeeping still happens in the background.
+    // MVP P0-A — once the slow call finishes, the row ends FAILED and
+    // diagnosable: whatever it generated can no longer be delivered.
     resolveSlow({ replyText: 'respuesta tardía' })
     await new Promise((r) => setTimeout(r, 20))
-    expect(deps.completeQueueItem).toHaveBeenCalledWith('q1')
+    expect(deps.failQueueItem).toHaveBeenCalledWith('q1', SYNC_TIMEOUT_ERROR)
+    expect(deps.completeQueueItem).not.toHaveBeenCalled()
   })
 
-  it('a background failure after timeout marks the item failed, not completed', async () => {
+  it('a background failure after timeout marks the item failed (sync_timeout + the error), not completed', async () => {
     let rejectSlow!: (err: Error) => void
     const slow = new Promise<{ replyText: string | null }>((_resolve, reject) => { rejectSlow = reject })
 
@@ -135,7 +143,36 @@ describe('handleProcessSync — timeout (Fase 1 §10/§11)', () => {
 
     rejectSlow(new Error('boom after timeout'))
     await new Promise((r) => setTimeout(r, 20))
-    expect(deps.failQueueItem).toHaveBeenCalledWith('q1', 'boom after timeout')
+    expect(deps.failQueueItem).toHaveBeenCalledWith('q1', `${SYNC_TIMEOUT_ERROR} (boom after timeout)`)
     expect(deps.completeQueueItem).not.toHaveBeenCalled()
+  })
+
+  it('the pipeline itself reports deadline_exceeded within the race → ok_timeout, row failed (sync_timeout), not completed', async () => {
+    const deps = makeDeps({ processMessage: vi.fn(async () => ({ replyText: null, reason: 'deadline_exceeded' as const })) })
+    const result = await handleProcessSync({ secretHeader: SECRET, expectedSecret: SECRET, queueItemId: 'q1', timeoutMs: 1000, deps })
+
+    expect(result.body).toEqual({ replyText: null, outcome: 'ok_timeout' })
+    expect(deps.failQueueItem).toHaveBeenCalledWith('q1', SYNC_TIMEOUT_ERROR)
+    expect(deps.completeQueueItem).not.toHaveBeenCalled()
+  })
+})
+
+describe('handleProcessSync — silencios por diseño (MVP P0-A)', () => {
+  it('bot desactivado → ok_silent, fila completed (no es un error)', async () => {
+    const deps = makeDeps({ processMessage: vi.fn(async () => ({ replyText: null, reason: 'bot_disabled' as const })) })
+    const result = await handleProcessSync({ secretHeader: SECRET, expectedSecret: SECRET, queueItemId: 'q1', timeoutMs: 1000, deps })
+
+    expect(result.body).toEqual({ replyText: null, outcome: 'ok_silent' })
+    expect(deps.completeQueueItem).toHaveBeenCalledWith('q1')
+    expect(deps.failQueueItem).not.toHaveBeenCalled()
+  })
+})
+
+describe('createInternalServerDeps — toda falla del camino síncrono es TERMINAL (MVP P0-A)', () => {
+  it('failQueueItem pasa terminal: true (una fila AutoResponder nunca vuelve a pending)', async () => {
+    const { failQueueItem } = await import('./lib/supabase')
+    const deps = createInternalServerDeps()
+    await deps.failQueueItem('q1', 'boom')
+    expect(failQueueItem).toHaveBeenCalledWith('q1', 'boom', { terminal: true })
   })
 })

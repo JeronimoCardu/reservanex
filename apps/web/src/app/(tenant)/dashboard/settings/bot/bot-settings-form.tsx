@@ -90,7 +90,9 @@ export function BotSettingsForm({ settings }: BotSettingsFormProps) {
             />
             <span className="text-sm font-medium">Bot activo</span>
             <span className="text-xs text-muted-foreground">
-              — {active ? 'el bot responde mensajes nuevos' : 'todos los chats nuevos arrancan en modo manual'}
+              — {active
+                ? 'la IA responde los mensajes de tus clientes'
+                : 'la IA no responde. Las confirmaciones automáticas de pedidos y solicitudes siguen funcionando'}
             </span>
           </label>
 

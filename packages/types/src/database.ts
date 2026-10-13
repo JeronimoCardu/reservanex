@@ -413,6 +413,7 @@ export type Database = {
           ai_mode: Database["public"]["Enums"]["ai_mode"]
           ai_reactivated_at: string | null
           ai_reactivated_by: string | null
+          ai_session_last_inbound_at: string | null
           assigned_user_id: string | null
           channel: Database["public"]["Enums"]["conversation_channel"]
           closed_at: string | null
@@ -457,6 +458,7 @@ export type Database = {
           ai_mode?: Database["public"]["Enums"]["ai_mode"]
           ai_reactivated_at?: string | null
           ai_reactivated_by?: string | null
+          ai_session_last_inbound_at?: string | null
           assigned_user_id?: string | null
           channel?: Database["public"]["Enums"]["conversation_channel"]
           closed_at?: string | null
@@ -501,6 +503,7 @@ export type Database = {
           ai_mode?: Database["public"]["Enums"]["ai_mode"]
           ai_reactivated_at?: string | null
           ai_reactivated_by?: string | null
+          ai_session_last_inbound_at?: string | null
           assigned_user_id?: string | null
           channel?: Database["public"]["Enums"]["conversation_channel"]
           closed_at?: string | null
@@ -4138,12 +4141,17 @@ export type Database = {
         Returns: Json
       }
       claim_ai_auto_reply_slot: {
-        Args: { p_conversation_id: string; p_tenant_id: string }
+        Args: {
+          p_conversation_id: string
+          p_human_until?: string
+          p_inbound_message_id: string
+          p_tenant_id: string
+        }
         Returns: {
-          claimed: boolean
-          is_last: boolean
           new_count: number
+          outcome: string
           reply_limit: number
+          session_reset: boolean
         }[]
       }
       claim_next_media_event: {
@@ -4193,6 +4201,29 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "messaging_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_next_pollable_message_queue_item: {
+        Args: never
+        Returns: {
+          attempts: number
+          created_at: string
+          id: string
+          last_error: string | null
+          processed_at: string | null
+          processing_started_at: string | null
+          raw_payload: Json
+          scheduled_at: string
+          status: Database["public"]["Enums"]["queue_status"]
+          tenant_id: string
+          updated_at: string
+          whatsapp_account_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "message_queue"
           isOneToOne: false
           isSetofReturn: true
         }
