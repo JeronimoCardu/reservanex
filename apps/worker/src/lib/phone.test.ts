@@ -4,7 +4,7 @@
 // the comment at the top of ./phone.ts). Keeping both test files in sync
 // catches drift between the two copies.
 import { describe, expect, it } from 'vitest'
-import { normalizePhoneForWhatsApp, isValidARWhatsAppPhone } from './phone'
+import { normalizePhoneForWhatsApp, isValidARWhatsAppPhone, maskPhoneForLog } from './phone'
 
 describe('normalizePhoneForWhatsApp (worker copy)', () => {
   it('leaves an already-canonical 549 number unchanged', () => {
@@ -51,5 +51,23 @@ describe('isValidARWhatsAppPhone (worker copy)', () => {
 
   it('rejects a non-numeric string (e.g. a saved contact name)', () => {
     expect(isValidARWhatsAppPhone('Jeronimo Cardu')).toBe(false)
+  })
+})
+
+// MVP PROD-A1 — los logs llevan sólo los últimos 4 dígitos.
+describe('maskPhoneForLog', () => {
+  it('deja los últimos 4 dígitos', () => {
+    expect(maskPhoneForLog('5492325471890')).toBe('***1890')
+    expect(maskPhoneForLog('+54 9 2325 47-1890')).toBe('***1890')
+  })
+
+  it('nunca deja el número completo, ni siquiera uno corto', () => {
+    expect(maskPhoneForLog('1234')).toBe('***')
+    expect(maskPhoneForLog('5492325471890')).not.toContain('54923254')
+  })
+
+  it('sin teléfono → null', () => {
+    expect(maskPhoneForLog(null)).toBeNull()
+    expect(maskPhoneForLog('')).toBeNull()
   })
 })

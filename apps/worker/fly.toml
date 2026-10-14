@@ -1,0 +1,52 @@
+# ReservaNex worker — Fly.io (MVP PROD-A1). ONE always-on machine.
+#
+# Deploy from the REPO ROOT (the Dockerfile needs the whole workspace):
+#   fly deploy . --config apps/worker/fly.toml --dockerfile apps/worker/Dockerfile --ha=false
+#
+# Secrets are NOT here. Set them with `fly secrets set` (see the PROD-A1
+# report): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DEEPSEEK_API_KEY,
+# DEEPSEEK_MODEL, WORKER_INTERNAL_SECRET (same value as on Vercel).
+#
+# Placeholder app name: confirm availability when creating the app.
+app = "reservanex-worker"
+
+# São Paulo. Confirm the production Supabase region before creating the app:
+# if it is not sa-east-1, re-evaluate placement.
+primary_region = "gru"
+
+# The worker handles SIGTERM (drain, then exit). Fly's default is SIGINT.
+kill_signal  = "SIGTERM"
+# The sync budget is 20s and the worker's own drain deadline is 25s.
+kill_timeout = "30s"
+
+[env]
+  NODE_ENV             = "production"
+  WORKER_INTERNAL_PORT = "8788"
+
+[http_service]
+  internal_port        = 8788
+  force_https          = true
+  # Always on: never scale to zero (the poller and the sync endpoint must be up).
+  auto_stop_machines   = "off"
+  auto_start_machines  = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type       = "requests"
+    soft_limit = 25
+    hard_limit = 50
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval     = "15s"
+    timeout      = "5s"
+    method       = "GET"
+    path         = "/healthz"
+
+# Restart on any exit (crash, fail-fast config error, unhandled exception).
+[[restart]]
+  policy = "always"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "512mb"

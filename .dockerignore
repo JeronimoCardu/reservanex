@@ -1,0 +1,45 @@
+# Build context for apps/worker/Dockerfile (context = repo root).
+
+# Secrets and local configuration: never inside an image.
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Host dependencies and build artefacts (installed/produced inside the image).
+**/node_modules
+**/.turbo
+**/.next
+**/dist
+**/coverage
+**/*.tsbuildinfo
+.pnpm-store
+
+# Repo metadata and local tooling.
+.git
+.claude
+.vscode
+.idea
+.mcp.json
+**/*.log
+
+# Not part of the worker runtime. Only the manifests of the other workspace
+# packages are needed (frozen lockfile), never their sources.
+docs
+supabase
+*.md
+*.sql
+apps/web/*
+!apps/web/package.json
+apps/marketing/*
+!apps/marketing/package.json
+packages/supabase/*
+!packages/supabase/package.json
+packages/config/*
+!packages/config/package.json
+packages/validators/*
+!packages/validators/package.json
+
+# Worker: dev/ops scripts (they mutate data with the service-role key) and tests.
+apps/worker/src/scripts
+**/*.test.ts

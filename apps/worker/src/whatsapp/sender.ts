@@ -1,5 +1,6 @@
 import { createClient } from '../lib/supabase'
 import type { MessageContext } from '../context/builder'
+import { maskPhoneForLog } from '../lib/phone'
 
 const GRAPH_API_VERSION = 'v21.0'
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`
@@ -59,16 +60,16 @@ export async function sendWhatsAppReply(ctx: MessageContext, text: string): Prom
 
     if (!res.ok) {
       const detail = data.error?.message ?? res.statusText
-      console.error('[sender] Meta API error', { status: res.status, detail, to: ctx.contactPhone })
+      console.error('[sender] Meta API error', { status: res.status, detail, to: maskPhoneForLog(ctx.contactPhone) })
       return null
     }
 
     const outboundWamid = data.messages?.[0]?.id ?? null
 
     if (outboundWamid) {
-      console.log('[sender] sent', { outboundWamid, to: ctx.contactPhone })
+      console.log('[sender] sent', { outboundWamid, to: maskPhoneForLog(ctx.contactPhone) })
     } else {
-      console.warn('[sender] sent but Meta returned no wamid', { to: ctx.contactPhone })
+      console.warn('[sender] sent but Meta returned no wamid', { to: maskPhoneForLog(ctx.contactPhone) })
     }
 
     return outboundWamid

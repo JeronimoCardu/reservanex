@@ -31,6 +31,16 @@ export function normalizePhoneForWhatsApp(input: string): string {
   return '549' + digits
 }
 
+/**
+ * MVP PROD-A1 — para logs: sólo los últimos 4 dígitos ("***1234"). Alcanza
+ * para correlacionar un caso sin dejar el número completo en los logs.
+ */
+export function maskPhoneForLog(phone: string | null | undefined): string | null {
+  if (!phone) return null
+  const digits = phone.replace(/\D/g, '')
+  return digits.length <= 4 ? '***' : `***${digits.slice(-4)}`
+}
+
 /** Returns true if phone is a valid Argentine WhatsApp mobile: 549 + 10 digits */
 export function isValidARWhatsAppPhone(phone: string): boolean {
   return /^549\d{10}$/.test(phone)

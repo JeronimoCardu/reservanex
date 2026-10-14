@@ -803,13 +803,12 @@ export async function generateAIReply(ctx: MessageContext, options?: GenerateAIR
         toolResult = JSON.stringify({ error: err instanceof Error ? err.message : String(err) })
       }
 
-      // Fase 3 (validación de agente/DeepSeek): args + resultado truncado agregados
-      // a este mismo log existente para poder auditar tool calls por escenario sin
-      // alterar el flujo de ejecución ni el valor de retorno de la función.
+      // MVP PROD-A1 — sin args ni resultado: llevan datos del cliente (nombre,
+      // teléfono, fechas). Las claves y el tamaño alcanzan para seguir un caso.
       console.log(`[responder] tool=${toolCall.name} iteration=${i + 1}`, {
-        id:     toolCall.id,
-        args:   toolCall.args,
-        result: toolResult.length > 500 ? toolResult.slice(0, 500) + '…' : toolResult,
+        id:          toolCall.id,
+        argKeys:     Object.keys(toolCall.args ?? {}),
+        resultChars: toolResult.length,
       })
       messages.push({ role: 'tool', content: toolResult, tool_call_id: toolCall.id })
     }

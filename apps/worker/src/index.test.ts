@@ -30,6 +30,36 @@ describe('worker bootstrap (§14 A/B)', () => {
   })
 })
 
+// MVP PROD-A1 — production bootstrap. Structural for the same reason as
+// above: importing index.ts would validate the real env and bind a port.
+describe('production bootstrap (PROD-A1)', () => {
+  const code = indexSource.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n')
+
+  it('fails fast: validates the config BEFORE starting anything, and exits on failure', () => {
+    const validate = code.indexOf('validateWorkerConfig(process.env)')
+    expect(validate).toBeGreaterThan(-1)
+    expect(validate).toBeLessThan(code.indexOf('startPoller()'))
+    expect(validate).toBeLessThan(code.indexOf('startInternalServer()'))
+    expect(code).toMatch(/if \(!configCheck\.ok\) \{[\s\S]*?process\.exit\(1\)/)
+  })
+
+  it('prints problem names only — never process.env values', () => {
+    expect(code).toContain('configCheck.problems.map')
+    expect(code).not.toMatch(/console\.\w+\([^)]*process\.env\.(SUPABASE|DEEPSEEK|WORKER_INTERNAL_SECRET)/)
+  })
+
+  it('production never loads a .env file: config comes from the platform', () => {
+    expect(code).toMatch(/if \(process\.env\.NODE_ENV !== 'production'\) \{\s*config\(/)
+  })
+
+  it('SIGTERM and SIGINT drain the poller and the HTTP server, with a deadline', () => {
+    expect(code).toContain("process.on('SIGTERM', shutdown)")
+    expect(code).toContain("process.on('SIGINT', shutdown)")
+    expect(code).toContain('Promise.all([stopPoller(), internalServer?.close()])')
+    expect(code).toMatch(/setTimeout\([\s\S]*?process\.exit\(1\)[\s\S]*?SHUTDOWN_DEADLINE_MS\)\.unref\(\)/)
+  })
+})
+
 describe('MacroDroid transports are deleted from the worker (§14 F)', () => {
   const deletedModules = [
     'dispatcher.ts',

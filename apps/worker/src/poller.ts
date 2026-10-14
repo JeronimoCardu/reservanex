@@ -20,6 +20,18 @@ const RECOVERY_INTERVAL_MS = 60_000
 // setInterval tick can slip through while claimQueueItem is in-flight.
 let isProcessing = false
 
+// MVP PROD-A1 — apagado ordenado: los timers se guardan para poder frenarlos,
+// y `currentTick` es el ciclo en curso, que stopPoller() espera.
+let stopped = false
+let pollTimer:     NodeJS.Timeout | null = null
+let recoveryTimer: NodeJS.Timeout | null = null
+let currentTick:   Promise<void> = Promise.resolve()
+
+function tick(): void {
+  if (isProcessing) return
+  currentTick = poll()
+}
+
 // Exported (not just used by startPoller's setInterval) so integration
 // scripts can drive the poller deterministically, one cycle at a time —
 // same pattern as dispatcher.ts's runDispatchTick / media-dispatcher.ts's
@@ -70,14 +82,29 @@ export async function startPoller(): Promise<void> {
   // Recover items stuck in 'processing' past the safe threshold — same
   // function/threshold/behavior as the periodic call below (Fase 7 Parte D).
   await recoverProcessingItems()
+  if (stopped) return
   // Run once immediately so the first message isn't delayed 3s
-  poll()
-  setInterval(poll, POLL_INTERVAL_MS)
-  setInterval(() => {
+  tick()
+  pollTimer = setInterval(tick, POLL_INTERVAL_MS)
+  recoveryTimer = setInterval(() => {
     recoverProcessingItems().catch((err: unknown) => {
       console.error('[poller] periodic recoverProcessingItems failed (non-fatal)', {
         error: err instanceof Error ? err.message : String(err),
       })
     })
   }, RECOVERY_INTERVAL_MS)
+  console.log('[poller] started')
+}
+
+/**
+ * No arranca ciclos nuevos y espera el que esté en curso. Un ciclo que no
+ * termina a tiempo lo corta el deadline de index.ts; su fila queda
+ * 'processing' y recoverProcessingItems la cierra como failed más tarde.
+ */
+export async function stopPoller(): Promise<void> {
+  stopped = true
+  if (pollTimer)     clearInterval(pollTimer)
+  if (recoveryTimer) clearInterval(recoveryTimer)
+  pollTimer = recoveryTimer = null
+  await currentTick
 }

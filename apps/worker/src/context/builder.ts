@@ -582,7 +582,7 @@ export async function buildContext(queueItem: QueueRow): Promise<MessageContext>
         .eq('tenant_id', tenantId)
       if (!nameError) {
         contactName = detected
-        console.log(`[builder] contact name saved: "${detected}" for contact ${contactId}`)
+        console.log(`[builder] contact name saved for contact ${contactId}`)
       }
     }
   }
@@ -672,7 +672,7 @@ export async function buildContext(queueItem: QueueRow): Promise<MessageContext>
     if (!newLeadSource) newLeadSource = detectedCode ? 'public_site' : 'whatsapp_direct'
 
     console.log('[worker:date-guest-parser]', {
-      text:      messageText.slice(0, 120),
+      textChars: messageText.length,
       startDate: combinedInfo.requested_start_date ?? null,
       endDate:   combinedInfo.requested_end_date   ?? null,
       guests:    combinedInfo.requested_guests     ?? null,
