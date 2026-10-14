@@ -124,3 +124,31 @@ export function humanAttentionAttendedPatch(userId: string, nowIso: string) {
     human_attention_resolved_by: userId,
   }
 }
+
+// ── "Pausar IA" — una persona toma la conversación ───────────────────────────
+//
+// La otra mitad del mismo ciclo: abre una Atención humana que se cierra con
+// "Marcar como atendido" (humanAttentionAttendedPatch, arriba). No hay otra
+// máquina de estados.
+//
+//   - ai_mode = manual con human_until = NULL es, para el worker,
+//     'manual_no_expiry': silencio hasta que alguien marque "atendido". La
+//     ventana deslizante (human_until) es de los handoffs de la IA, donde nadie
+//     avisa cuándo terminó; acá una persona decidió atender y es ella la que
+//     declara cuándo terminó. Una ventana vencida haría que la IA volviera a
+//     hablar encima de quien está atendiendo.
+//   - human_attention_requested_at = now: el caso aparece en la bandeja (con
+//     "Abrir WhatsApp" y "Marcar como atendido").
+//   - ai_handoff_reason = 'manual_takeover' ("Tomado manualmente desde ReservaNex").
+//
+// Nunca toca mensajes ni manda nada al cliente.
+export function manualTakeoverPatch(nowIso: string) {
+  return {
+    ai_mode:                      'manual' as const,
+    needs_human_attention:        true as const,
+    human_attention_requested_at: nowIso,
+    ai_handoff_reason:            'manual_takeover' as const,
+    ai_handoff_at:                nowIso,
+    human_until:                  null,
+  }
+}

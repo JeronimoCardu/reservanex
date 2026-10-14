@@ -14,6 +14,7 @@ import {
   MAX_PROPERTY_VIDEOS,
   MAX_VIDEO_DURATION_SECONDS,
   VIDEO_LIMIT_MESSAGES,
+  VIDEO_UPLOADS_ENABLED,
   isAllowedVideoMimeType,
   videoExtensionForMime,
 } from '@/lib/property-videos/limits'
@@ -390,6 +391,12 @@ export async function uploadPropertyVideoAction(
   formData: FormData,
 ): Promise<ActionResult<{ id: string }>> {
   const ctx = await requireTenantContext()
+
+  // MVP — subida de videos nuevos apagada (VIDEO_UPLOADS_ENABLED). Se rechaza
+  // acá, antes de cualquier efecto: no alcanza con que la UI no ofrezca el botón.
+  if (!VIDEO_UPLOADS_ENABLED) {
+    return { success: false, error: VIDEO_LIMIT_MESSAGES.uploadsDisabled }
+  }
 
   if (!canManageProperties(ctx)) {
     return { success: false, error: 'No tenés permiso para subir videos.' }

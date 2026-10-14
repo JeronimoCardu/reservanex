@@ -313,6 +313,39 @@ export async function setAiModeAction(
   }
 }
 
+// MVP P0-B — "Pausar IA": "esta conversación la atiendo yo". Pasa la
+// conversación a una persona (manualTakeoverPatch: Atención humana abierta,
+// sin vencimiento) para responder desde WhatsApp Business sin que la IA
+// conteste encima. Se vuelve a la IA con "Marcar como atendido". No manda nada
+// al cliente ni toca mensajes. Si la conversación ya estaba con una persona,
+// no reescribe nada (idempotente): alreadyPaused = true.
+export async function pauseConversationAiAction(
+  id: string,
+): Promise<ActionResult<{ alreadyPaused: boolean }>> {
+  const ctx = await requireTenantContext()
+  if (ctx.accessMode === 'setup_operator') return { success: false, error: 'No disponible en modo setup.' }
+
+  // Mismo permiso que "Marcar como atendido": atender clientes.
+  const denied = requireAttendCustomers<{ alreadyPaused: boolean }>(ctx)
+  if (denied) return denied
+
+  const conversation = await repo.getConversationById(ctx.tenantId, id)
+  if (!conversation) return { success: false, error: 'Conversación no encontrada.' }
+
+  if (conversation.ai_mode !== 'autonomous') {
+    return { success: true, data: { alreadyPaused: true } }
+  }
+
+  try {
+    const paused = await repo.pauseConversationAi(ctx.tenantId, id)
+    revalidateConversationSurfaces(conversation.contact_id)
+    return { success: true, data: { alreadyPaused: !paused } }
+  } catch (err) {
+    console.error('[conversations] pause-ai failed:', { conversationId: id, error: err instanceof Error ? err.message : String(err) })
+    return { success: false, error: 'No se pudo pausar la IA. Intentá de nuevo.' }
+  }
+}
+
 export async function reactivateConversationAiAction(
   id: string,
 ): Promise<ActionResult> {

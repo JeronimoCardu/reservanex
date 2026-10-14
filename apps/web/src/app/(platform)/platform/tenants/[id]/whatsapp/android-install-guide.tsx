@@ -161,7 +161,7 @@ export function AndroidInstallGuide({ settings, endpointsResult }: AndroidInstal
   const statusCfg = DEVICE_STATUS_STYLE[deviceStatus]
 
   const hasDeviceToken   = settings?.has_device_token ?? false
-  const heartbeatRecent  = recentEnough(settings?.last_device_seen_at ?? null, 15 * 60 * 1000)
+  const deviceActivityRecent  = recentEnough(settings?.last_device_seen_at ?? null, 15 * 60 * 1000)
   const inboundRecent    = recentEnough(settings?.last_inbound_at ?? null, 24 * 60 * 60 * 1000)
 
   const ep = endpointsResult.ok ? endpointsResult.endpoints : null
@@ -271,8 +271,8 @@ export function AndroidInstallGuide({ settings, endpointsResult }: AndroidInstal
         <p>Orden recomendado. Los puntos verificables muestran evidencia real; el resto son instrucciones — nunca se marcan como &quot;pasó&quot; sin evidencia.</p>
         <ol className="space-y-2.5">
           <li className="flex items-center justify-between gap-2">
-            <span>1. Heartbeat</span>
-            <AutoStatus ok={heartbeatRecent} okLabel="Recibido" pendingLabel="Esperando" />
+            <span>1. Actividad del dispositivo</span>
+            <AutoStatus ok={deviceActivityRecent} okLabel="Reciente" pendingLabel="Esperando" />
           </li>
           <li className="flex items-center justify-between gap-2">
             <span>2. Inbound de texto</span>
@@ -285,7 +285,7 @@ export function AndroidInstallGuide({ settings, endpointsResult }: AndroidInstal
           <ManualStep>7. Reboot — reiniciá el Android y verificá que todo vuelve solo, sin abrir ninguna app manualmente.</ManualStep>
         </ol>
         <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
-          &quot;Dispositivo conectado&quot; (AutoResponder configurado + heartbeat online) <strong className="text-foreground">no implica</strong> que
+          &quot;Actividad reciente&quot; (AutoResponder configurado + un mensaje autenticado en los últimos minutos) <strong className="text-foreground">no implica</strong> que
           el outbound de IA ya haya sido probado — son señales independientes.
         </div>
       </CollapsibleSection>

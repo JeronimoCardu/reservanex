@@ -20,6 +20,7 @@ import {
   MAX_VIDEO_DURATION_SECONDS,
   VIDEO_FILE_INPUT_ACCEPT,
   VIDEO_LIMIT_MESSAGES,
+  VIDEO_UPLOADS_ENABLED,
   isAllowedVideoMimeType,
 } from '@/lib/property-videos/limits'
 
@@ -154,7 +155,9 @@ export function PropertyVideoManager({ propertyId }: PropertyVideoManagerProps) 
     })
   }
 
-  const canUpload = !isUploading && videos.length < MAX_PROPERTY_VIDEOS
+  // MVP — con VIDEO_UPLOADS_ENABLED = false no se ofrece agregar videos ni se
+  // prometen límites de subida; los existentes se listan, reordenan y borran igual.
+  const canUpload = VIDEO_UPLOADS_ENABLED && !isUploading && videos.length < MAX_PROPERTY_VIDEOS
 
   if (isLoading) {
     return (
@@ -250,7 +253,9 @@ export function PropertyVideoManager({ propertyId }: PropertyVideoManagerProps) 
 
       {videos.length === 0 && (
         <p className="text-xs text-muted-foreground">
-          Sin videos. MP4, WebM o MOV · máx. {MAX_VIDEO_DURATION_SECONDS} seg · máx. {LEGACY_VIDEO_UPLOAD_MAX_LABEL}
+          {VIDEO_UPLOADS_ENABLED
+            ? <>Sin videos. MP4, WebM o MOV · máx. {MAX_VIDEO_DURATION_SECONDS} seg · máx. {LEGACY_VIDEO_UPLOAD_MAX_LABEL}</>
+            : 'Sin videos.'}
         </p>
       )}
 
@@ -282,7 +287,7 @@ export function PropertyVideoManager({ propertyId }: PropertyVideoManagerProps) 
         </>
       )}
 
-      {!canUpload && !isUploading && videos.length >= MAX_PROPERTY_VIDEOS && (
+      {VIDEO_UPLOADS_ENABLED && !canUpload && !isUploading && videos.length >= MAX_PROPERTY_VIDEOS && (
         <p className="text-xs text-muted-foreground text-center">
           Máximo {MAX_PROPERTY_VIDEOS} videos por propiedad.
         </p>

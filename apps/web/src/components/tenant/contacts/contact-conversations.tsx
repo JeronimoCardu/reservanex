@@ -5,6 +5,7 @@ import { ClientTimeAgo } from '@/components/tenant/shared/client-time-ago'
 import { buildContactWhatsAppHref } from '@/lib/human-attention/contact-whatsapp-href'
 import { channelLabel } from '@/lib/human-attention/semantics'
 import { cn } from '@/lib/utils'
+import { PauseAiButton } from './pause-ai-button'
 
 // ════════════════════════════════════════════════════════════════════════════
 // Atención humana V2 — reemplaza a ConversationList en la ficha del contacto.
@@ -31,9 +32,11 @@ const senderPrefix: Record<string, string> = {
 interface ContactConversationsProps {
   conversations: ConversationRow[]
   contactPhone:  string | null
+  /** MVP P0-B — puede "atender clientes" (owner, o recepcionista con el permiso): ve "Pausar IA". */
+  canAttend:     boolean
 }
 
-export function ContactConversations({ conversations, contactPhone }: ContactConversationsProps) {
+export function ContactConversations({ conversations, contactPhone, canAttend }: ContactConversationsProps) {
   const waHref = buildContactWhatsAppHref(contactPhone)
 
   return (
@@ -68,6 +71,9 @@ export function ContactConversations({ conversations, contactPhone }: ContactCon
                   <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium', mode.className)}>
                     {mode.label}
                   </span>
+                )}
+                {canAttend && conv.ai_mode === 'autonomous' && conv.status !== 'closed' && (
+                  <PauseAiButton conversationId={conv.id} />
                 )}
                 {pending && (
                   <Link

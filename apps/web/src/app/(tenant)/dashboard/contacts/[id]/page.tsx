@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
 import { MessageCircleOff } from 'lucide-react'
 import { requireTenantContext } from '@/lib/auth/require-tenant-context'
+import { canAttendCustomers } from '@/lib/auth/attend-customers'
 import { getContactById } from '@/lib/repositories/contacts.repository'
 import { listConversations } from '@/lib/repositories/conversations.repository'
 import { listNotes } from '@/lib/repositories/notes.repository'
@@ -84,6 +85,7 @@ export default async function ContactDetailPage({
             <ContactConversations
               conversations={conversations}
               contactPhone={contact.phone}
+              canAttend={canAttendCustomers(ctx)}
             />
           )}
         </TabsContent>

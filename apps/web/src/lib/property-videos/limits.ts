@@ -30,6 +30,16 @@ export const MAX_PROPERTY_VIDEOS = 2
  * 4 194 304 bytes: ~300 KB por debajo de los 4,5 MB de Vercel, margen para el
  * multipart y el resto del request. Desaparece con la integración de TUS.
  */
+/**
+ * MVP — la subida de videos NUEVOS está apagada para el lanzamiento. Fuente
+ * única: la UI no ofrece agregar videos y uploadPropertyVideoAction los
+ * rechaza igual (no alcanza con esconder el botón). Los videos existentes se
+ * siguen listando, reordenando, borrando y sirviendo (/api/property-videos).
+ * El flujo legacy y las primitivas TUS / reservas (2B1) quedan intactos para
+ * cuando se reactive.
+ */
+export const VIDEO_UPLOADS_ENABLED: boolean = false
+
 export const LEGACY_VIDEO_UPLOAD_MAX_BYTES = 4 * 1024 * 1024
 export const LEGACY_VIDEO_UPLOAD_MAX_LABEL = `${LEGACY_VIDEO_UPLOAD_MAX_BYTES / (1024 * 1024)} MB`
 
@@ -67,4 +77,6 @@ export const VIDEO_LIMIT_MESSAGES = {
   /** TEMPORAL — subida legacy por Server Action. */
   legacyTooLarge: `Por ahora el video no puede superar ${LEGACY_VIDEO_UPLOAD_MAX_LABEL}.`,
   tooLong:        `El video no puede superar ${MAX_VIDEO_DURATION_SECONDS} segundos.`,
+  /** MVP — VIDEO_UPLOADS_ENABLED = false. */
+  uploadsDisabled: 'Por ahora no se pueden agregar videos nuevos.',
 } as const

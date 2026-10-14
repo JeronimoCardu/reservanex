@@ -17,6 +17,7 @@ import {
 import { Input }    from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Button }   from '@/components/ui/button'
+import { VIDEO_UPLOADS_ENABLED } from '@/lib/property-videos/limits'
 
 // ── Text-only schema (images managed via useState) ──────────────────────────────
 const textSchema = z.object({
@@ -401,7 +402,11 @@ export function PropertyForm({
         <div>
           <p className="mb-0.5 text-sm font-medium">Galería</p>
           {videoSlot
-            ? <p className="mb-2 text-xs text-muted-foreground">Agregá fotos y hasta 2 videos cortos de la propiedad.</p>
+            ? <p className="mb-2 text-xs text-muted-foreground">
+                {VIDEO_UPLOADS_ENABLED
+                  ? 'Agregá fotos y hasta 2 videos cortos de la propiedad.'
+                  : 'Agregá fotos de la propiedad.'}
+              </p>
             : null
           }
 

@@ -1,7 +1,7 @@
 import type { ConversationRow, ContactRow, ConversationStatus, AiMode } from '@orderflow/types'
 import type { CreateConversationInput, UpdateConversationInput } from '@orderflow/validators'
 import { createClient } from '@orderflow/supabase/server'
-import { humanAttentionAttendedPatch } from '@/lib/human-attention/semantics'
+import { humanAttentionAttendedPatch, manualTakeoverPatch } from '@/lib/human-attention/semantics'
 
 export type ConversationWithContact = ConversationRow & {
   contact: ContactRow
@@ -151,16 +151,7 @@ export async function setAiMode(
   const supabase = await createClient()
   const now = new Date().toISOString()
 
-  const patch =
-    mode === 'manual'
-      ? {
-          ai_mode:                      mode,
-          needs_human_attention:        true  as const,
-          human_attention_requested_at: now,
-          ai_handoff_reason:            'manual_takeover' as const,
-          ai_handoff_at:                now,
-        }
-      : { ai_mode: mode }
+  const patch = mode === 'manual' ? manualTakeoverPatch(now) : { ai_mode: mode }
 
   const { data, error } = await supabase
     .from('conversations')
@@ -172,6 +163,31 @@ export async function setAiMode(
 
   if (error) throw new Error(error.message)
   return data
+}
+
+/**
+ * MVP P0-B — "Pausar IA": la misma toma manual que setAiMode('manual'), pero
+ * SÓLO si la conversación sigue en IA (guard atómico en el UPDATE). Sobre una
+ * conversación que ya está con una persona —un handoff de la IA con su
+ * ventana, u otra toma— no reescribe nada: ni el motivo, ni requested_at, ni
+ * human_until. Devuelve si la tomó esta llamada.
+ *
+ * Sesión del usuario: las RLS de conversations se suman al filtro de tenant
+ * (un receptionist sólo toma lo que puede ver).
+ */
+export async function pauseConversationAi(tenantId: string, id: string): Promise<boolean> {
+  const supabase = await createClient()
+
+  const { data, error } = await supabase
+    .from('conversations')
+    .update(manualTakeoverPatch(new Date().toISOString()))
+    .eq('tenant_id', tenantId)
+    .eq('id', id)
+    .eq('ai_mode', 'autonomous')
+    .select('id')
+
+  if (error) throw new Error(error.message)
+  return (data ?? []).length > 0
 }
 
 /**

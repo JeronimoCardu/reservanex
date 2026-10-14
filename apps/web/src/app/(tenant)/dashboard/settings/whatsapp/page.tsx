@@ -24,7 +24,7 @@ export default async function WhatsAppSettingsPage() {
   if (ctx.role !== 'owner' && !ctx.canAccessSettings) redirect('/dashboard/attention')
 
   const result = await getWhatsAppSettingsAction()
-  const settings = result.success ? result.data : null
+  const settings = (result.success ? result.data : undefined) ?? { kind: 'not_configured' as const }
 
   return (
     <div className="flex flex-col overflow-hidden h-full">
@@ -52,12 +52,12 @@ export default async function WhatsAppSettingsPage() {
       <div className="border-b bg-background px-6 py-4">
         <h1 className="text-lg font-semibold">Configuración de WhatsApp</h1>
         <p className="text-xs text-muted-foreground">
-          Estado de la conexión WhatsApp de tu inmobiliaria.
+          Cómo está configurado el WhatsApp de tu negocio.
         </p>
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-6">
-        <WhatsAppSettingsForm settings={settings ?? null} />
+        <WhatsAppSettingsForm settings={settings} />
       </div>
     </div>
   )

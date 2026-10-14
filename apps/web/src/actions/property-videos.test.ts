@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeSupabase } from '@/testing/fake-supabase'
+import type * as VideoLimits from '@/lib/property-videos/limits'
 
 // Property Videos Fase 1 — uploadPropertyVideoAction no puede colgar un video
 // de una propiedad de OTRO tenant. La propiedad se resuelve contra el tenant
@@ -9,6 +10,14 @@ import { FakeSupabase } from '@/testing/fake-supabase'
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 vi.mock('@/lib/auth/require-tenant-context', () => ({ requireTenantContext: vi.fn() }))
 vi.mock('@orderflow/supabase/server', () => ({ createClient: vi.fn() }))
+// MVP — la subida está apagada (VIDEO_UPLOADS_ENABLED = false). Estos tests
+// cubren el flujo legacy, que queda intacto para cuando se reactive: el flag
+// se prende SÓLO acá. El flag real, apagado, se prueba en
+// property-videos-disabled.test.ts.
+vi.mock('@/lib/property-videos/limits', async (importOriginal) => ({
+  ...(await importOriginal<typeof VideoLimits>()),
+  VIDEO_UPLOADS_ENABLED: true,
+}))
 
 import { requireTenantContext } from '@/lib/auth/require-tenant-context'
 import { createClient } from '@orderflow/supabase/server'
