@@ -1,0 +1,57 @@
+# ReservaNex worker — Render Blueprint (MVP PROD-A2).
+#
+# ONE always-on Web Service built from apps/worker/Dockerfile. A Web Service
+# (not a Background Worker or a Private Service) because Vercel must reach
+# POST /internal/autoresponder/process over public HTTPS; the queue poller
+# runs in the same process.
+#
+# Secrets are NOT in this file: every `sync: false` variable is asked for in
+# the Render dashboard when the Blueprint is created, and never stored in git.
+services:
+  - type: web
+    name: reservanex-worker
+    runtime: docker
+    # Oregon: same area as the production Supabase (West US, AWS us-west-2).
+    # Render can't change a service's region after creation.
+    region: oregon
+    # 0.5 CPU / 512 MB (formerly "Starter"). Paid plans never spin down;
+    # `free` sleeps after 15 min without inbound traffic, stopping the poller.
+    plan: 0.5c-512mb
+    numInstances: 1
+    branch: main
+    # The image needs the whole pnpm workspace: build context = repo root.
+    dockerfilePath: ./apps/worker/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    # On every deploy the old instance gets SIGTERM; the worker drains for up
+    # to 25s, inside this window, before Render sends SIGKILL.
+    maxShutdownDelaySeconds: 30
+    autoDeployTrigger: commit
+    # Only changes to what the image is built from redeploy the worker.
+    buildFilter:
+      paths:
+        - apps/worker/**
+        - packages/types/**
+        - package.json
+        - pnpm-lock.yaml
+        - pnpm-workspace.yaml
+        - .dockerignore
+    envVars:
+      # Render routes HTTP to PORT; the worker listens on 8788
+      # (WORKER_INTERNAL_PORT default, Dockerfile EXPOSE).
+      - key: PORT
+        value: "8788"
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_MODEL
+        sync: false
+      - key: WORKER_INTERNAL_SECRET
+        sync: false
+      - key: CUSTOMER_SITE_BASE_URL
+        sync: false

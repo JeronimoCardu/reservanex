@@ -3,8 +3,8 @@ import { config } from 'dotenv'
 
 // Development: load the unified root .env.local (src/ → apps/worker/ → apps/
 // → repo root). MVP PROD-A1 — in production (NODE_ENV=production, set by the
-// Dockerfile) configuration comes ONLY from the platform's environment (Fly
-// secrets), never from a file that might have slipped into the image.
+// Dockerfile) configuration comes ONLY from the platform's environment (Render
+// env vars), never from a file that might have slipped into the image.
 if (process.env.NODE_ENV !== 'production') {
   config({ path: path.resolve(__dirname, '../../../.env.local') })
 }
@@ -55,11 +55,11 @@ try {
   process.exit(1)
 }
 
-// MVP PROD-A1 — orderly shutdown. Fly sends SIGTERM on every deploy/restart
-// (kill_signal in fly.toml); Ctrl+C sends SIGINT. No new work is accepted,
+// MVP PROD-A1 — orderly shutdown. Render sends SIGTERM to the old instance on
+// every deploy/restart; Ctrl+C sends SIGINT. No new work is accepted,
 // in-flight work gets up to SHUTDOWN_DEADLINE_MS (the sync budget is 20s;
-// fly.toml's kill_timeout is 30s), then the process exits. A second signal
-// exits immediately.
+// render.yaml's maxShutdownDelaySeconds is 30s before SIGKILL), then the
+// process exits. A second signal exits immediately.
 const SHUTDOWN_DEADLINE_MS = 25_000
 let shuttingDown = false
 

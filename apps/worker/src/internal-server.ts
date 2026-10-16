@@ -29,7 +29,7 @@ type QueueRow = Database['public']['Tables']['message_queue']['Row']
 
 export const INTERNAL_SECRET_HEADER = 'x-worker-internal-secret'
 export const INTERNAL_PROCESS_PATH  = '/internal/autoresponder/process'
-// MVP PROD-A1 — liveness para la plataforma (Fly). Público: no lee la base,
+// MVP PROD-A1 — liveness para la plataforma (healthCheckPath de Render). Público: no lee la base,
 // no llama al LLM, no expone configuración. Sólo dice "el proceso y su HTTP
 // están vivos" (o que se está apagando).
 export const HEALTH_PATH            = '/healthz'
@@ -345,8 +345,8 @@ export function startInternalServer(): InternalServerHandle {
   })
 
   // Sin host: Node escucha en la dirección no especificada (:: con IPv6,
-  // que acepta también IPv4; 0.0.0.0 si no hay IPv6). Fly enruta a la
-  // máquina por esa interfaz; en local, localhost también llega.
+  // que acepta también IPv4; 0.0.0.0 si no hay IPv6). Render enruta a PORT
+  // por esa interfaz; en local, localhost también llega.
   server.listen(port, () => {
     console.log(`[internal-server] listening on :${port} — sync AutoResponder processing, timeout=${timeoutMs}ms, health=${HEALTH_PATH}`)
   })

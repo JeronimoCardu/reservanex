@@ -10,8 +10,10 @@
 # build. Single process (`node --import tsx`, no tsx CLI wrapper), so
 # SIGTERM reaches the worker's own handlers directly.
 #
-# No secrets here: configuration comes from the platform's environment
-# (Fly secrets). .dockerignore keeps every .env* file out of the context.
+# No secrets here: configuration comes from the platform's runtime
+# environment (Render env vars). Render also hands env vars to the build as
+# build args; this Dockerfile declares no ARG, so none reaches an image
+# layer. .dockerignore keeps every .env* file out of the context.
 
 FROM node:22-bookworm-slim
 
@@ -45,7 +47,7 @@ ENV NODE_ENV=production
 USER node
 WORKDIR /app/apps/worker
 
-# WORKER_INTERNAL_PORT default (internal-server.ts); fly.toml's internal_port.
+# WORKER_INTERNAL_PORT default (internal-server.ts) = PORT in render.yaml.
 EXPOSE 8788
 
 CMD ["node", "--import", "tsx", "src/index.ts"]
