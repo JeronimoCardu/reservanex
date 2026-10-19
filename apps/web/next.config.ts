@@ -50,6 +50,10 @@ try {
 const SERVER_ACTION_BODY_LIMIT = '20mb'
 
 const config: NextConfig = {
+  // Hostinger staging (branch staging/hostinger-smoke only): Hostinger's Next.js
+  // preset needs a standalone server and, with the app root at the monorepo root,
+  // does not inject this option itself.
+  output: 'standalone',
   transpilePackages: ['@orderflow/types', '@orderflow/supabase', '@orderflow/validators'],
   serverExternalPackages: ['pdfkit'],
   experimental: {
