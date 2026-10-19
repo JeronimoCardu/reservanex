@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "turbo run dev",
-    "build": "cd apps/web && node node_modules/next/dist/bin/next build",
+    "build": "node scripts/hostinger-web-build.mjs",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
