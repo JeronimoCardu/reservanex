@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "turbo run dev",
-    "build": "pnpm --dir apps/web run build",
+    "build": "cd apps/web && node node_modules/next/dist/bin/next build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
