@@ -17,4 +17,4 @@ packages:
 # never reach production runtime — see docs/backlog.md for the accepted-risk
 # writeup. Revisit if the pnpm version is upgraded.
 overrides:
-  next: ^15.5.25
+  next: ^15.5.28
