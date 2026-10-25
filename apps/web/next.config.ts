@@ -50,6 +50,10 @@ try {
 const SERVER_ACTION_BODY_LIMIT = '20mb'
 
 const config: NextConfig = {
+  // Hostinger sets HOSTINGER_BUILD=1 and serves a standalone server packaged by
+  // scripts/hostinger-web-build.mjs. Everywhere else (local, CI, Vercel) the default output:
+  // copying the standalone tree needs symlinks that plain Windows dev machines can't create.
+  output: process.env.HOSTINGER_BUILD === '1' ? 'standalone' : undefined,
   transpilePackages: ['@orderflow/types', '@orderflow/supabase', '@orderflow/validators'],
   serverExternalPackages: ['pdfkit'],
   experimental: {
