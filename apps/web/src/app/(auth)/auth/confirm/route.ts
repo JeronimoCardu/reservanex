@@ -1,6 +1,6 @@
-import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { createClient } from '@orderflow/supabase/server'
+import { localRedirect } from '@/lib/http/local-redirect'
 
 // SSR OTP verification for email-based auth flows (invite, recovery, signup).
 //
@@ -28,6 +28,10 @@ import { createClient } from '@orderflow/supabase/server'
 //   type=recovery → /auth/reset-password  (reset password)
 //   type=email    → /dashboard            (email change confirmation)
 //   type=signup   → /dashboard            (signup email confirmation)
+//
+// Every redirect is a relative Location (lib/http/local-redirect.ts): behind
+// Hostinger's proxy request.url carries the server's bind address
+// (https://0.0.0.0:3000), so an origin taken from it sends the browser nowhere.
 
 type AllowedOtpType = 'invite' | 'recovery' | 'email' | 'signup' | 'magiclink'
 
@@ -36,7 +40,7 @@ const ALLOWED_TYPES = new Set<AllowedOtpType>([
 ])
 
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url)
+  const { searchParams } = request.nextUrl
   const tokenHash = searchParams.get('token_hash')
   const type      = searchParams.get('type')
 
@@ -45,7 +49,7 @@ export async function GET(request: NextRequest) {
       hasToken: Boolean(tokenHash),
       type: type ?? '(none)',
     })
-    return NextResponse.redirect(`${origin}/auth/confirm-email?error=invalid_link`)
+    return localRedirect('/auth/confirm-email?error=invalid_link')
   }
 
   const supabase = await createClient()
@@ -62,10 +66,10 @@ export async function GET(request: NextRequest) {
       errorMessage: error.message,
       errorStatus:  error.status,
     })
-    return NextResponse.redirect(`${origin}/auth/confirm-email?error=invalid_link`)
+    return localRedirect('/auth/confirm-email?error=invalid_link')
   }
 
-  if (type === 'invite')   return NextResponse.redirect(`${origin}/auth/accept-invite`)
-  if (type === 'recovery') return NextResponse.redirect(`${origin}/auth/reset-password`)
-  return NextResponse.redirect(`${origin}/dashboard`)
+  if (type === 'invite')   return localRedirect('/auth/accept-invite')
+  if (type === 'recovery') return localRedirect('/auth/reset-password')
+  return localRedirect('/dashboard')
 }

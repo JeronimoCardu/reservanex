@@ -1,6 +1,6 @@
-import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { createClient } from '@orderflow/supabase/server'
+import { localRedirect } from '@/lib/http/local-redirect'
 
 // PKCE code exchange — kept for a future OAuth provider (Google, etc.), but
 // NOT used by any current flow: this app has no OAuth sign-in, and every
@@ -16,14 +16,16 @@ import { createClient } from '@orderflow/supabase/server'
 //   type=invite   → /auth/accept-invite   (user sets initial password)
 //   type=recovery → /auth/reset-password  (user resets password)
 //   (no type)     → /dashboard
+//
+// Redirects are relative, like /auth/confirm's (see lib/http/local-redirect.ts).
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url)
+  const { searchParams } = request.nextUrl
   const code = searchParams.get('code')
   const type = searchParams.get('type')
 
   if (!code) {
-    console.error('[auth:callback] no code param in request', { type, url: request.url.split('?')[0] })
-    return NextResponse.redirect(`${origin}/auth/confirm-email?error=invalid_link`)
+    console.error('[auth:callback] no code param in request', { type, path: request.nextUrl.pathname })
+    return localRedirect('/auth/confirm-email?error=invalid_link')
   }
 
   const supabase = await createClient()
@@ -36,10 +38,10 @@ export async function GET(request: NextRequest) {
       errorMessage: error.message,
       errorStatus: error.status,
     })
-    return NextResponse.redirect(`${origin}/auth/confirm-email?error=invalid_link`)
+    return localRedirect('/auth/confirm-email?error=invalid_link')
   }
 
-  if (type === 'invite')   return NextResponse.redirect(`${origin}/auth/accept-invite`)
-  if (type === 'recovery') return NextResponse.redirect(`${origin}/auth/reset-password`)
-  return NextResponse.redirect(`${origin}/dashboard`)
+  if (type === 'invite')   return localRedirect('/auth/accept-invite')
+  if (type === 'recovery') return localRedirect('/auth/reset-password')
+  return localRedirect('/dashboard')
 }

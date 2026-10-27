@@ -133,6 +133,13 @@ Revisit only if a security issue shows up.
 - Requests of 10, 20, 25 and 30 s complete; no proxy timeout up to 30 s.
 - Server Actions work behind the CDN (same-origin calls pass, a foreign `Origin` is rejected),
   including a 1.8 MB image upload; `next/image` serves AVIF/WebP through sharp.
+- Route handlers receive `request.url` as `https://0.0.0.0:3000/…` (measured on production): the
+  standalone server builds it from its own bind address (`HOSTNAME`, `PORT`), not from the public
+  host. Middleware redirects are unaffected because Next makes their `Location` relative, but a
+  route handler's response goes out as is. Same-site redirects from a route handler use
+  `localRedirect()` (`apps/web/src/lib/http/local-redirect.ts`), which sends a relative
+  `Location`; `local-redirect-surface.test.ts` fails if a route handler derives an origin from
+  the request.
 
 ## Known gaps
 
